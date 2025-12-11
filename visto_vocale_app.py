@@ -5,121 +5,189 @@ from google.genai import types
 import requests
 from io import BytesIO
 import json
-from gtts import gTTS # New import for audio
+from gtts import gTTS
+from duckduckgo_search import DDGS
+import warnings
+import time # We need time to wait between retries
+
+# --- 1. SILENCE WARNINGS ---
+warnings.filterwarnings("ignore")
 
 # --- CONFIGURATION ---
 API_KEY = os.environ.get("GEMINI_API_KEY")
 GEMINI_MODEL = "gemini-2.5-flash"
 
+# --- SYSTEM PROMPT ---
 SYSTEM_INSTRUCTION = """
-You are an Italian language image analysis tutor. Your task is to identify key objects in the image relevant to a beginner Italian lesson.
-You must output a single, complete JSON object. Do not include any text, conversation, or explanation outside of the JSON block.
+You are an expert TPRS Italian teacher. Create a 3-part lesson based on the image.
 
-The JSON object MUST contain one key, "vocabulary", which holds an array of three items.
-Each item in the "vocabulary" array must be a JSON object containing these four keys:
-1. "object_name": The English name of the object (e.g., "cheese").
-2. "italian_word": The corresponding Italian word (e.g., "il formaggio").
-3. "english_translation": The English translation of the sentence.
-4. "italian_sentence": A simple, A1-level Italian sentence using the word (e.g., "Il formaggio è delizioso.").
+1. "vocabulary": 5 key nouns from the image.
+2. "conversation": A short Q&A dialogue (Who/What/Where) using those nouns.
+3. "story": A repetitive story using the "Super 7 Verbs" (Essere, Avere, Esserci, Piacere, Andare, Volere) and the vocabulary.
+
+JSON STRUCTURE:
+{
+  "vocabulary": [
+    {
+      "object_name": "English name",
+      "italian_word": "Italian word (with article)",
+      "italian_sentence": "Simple sentence",
+      "english_translation": "English translation"
+    }
+  ],
+  "conversation": [
+    {"speaker": "Name", "italian": "...", "english": "..."}
+  ],
+  "story": [
+    {"italian": "...", "english": "..."}
+  ]
+}
 """
 
-# --- PAGE CONFIG ---
 st.set_page_config(page_title="Vista Vocale", layout="wide")
 
+# --- SIDEBAR ---
+with st.sidebar:
+    st.header("⚙️ Settings")
+    teacher_mode = st.checkbox("🎓 Teacher Mode", value=False, help="Hide English text for quizzing.")
+    st.info("Tip: If Search fails, try the 'Paste URL' tab.")
+
 # --- FUNCTIONS ---
+def search_image(query):
+    try:
+        results = DDGS().images(keywords=query, max_results=1)
+        if results: return results[0]['image']
+        return None
+    except: return None
 
 def get_audio_bytes(text, lang='it'):
-    """Generates audio mp3 bytes for the given text."""
     try:
         tts = gTTS(text=text, lang=lang)
         fp = BytesIO()
         tts.write_to_fp(fp)
         fp.seek(0)
         return fp
-    except Exception as e:
-        st.error(f"Audio error: {e}")
-        return None
+    except: return None
 
+# --- CACHING WITH RETRY LOGIC ---
+@st.cache_data(show_spinner=False)
 def analyze_image_lesson(image_url):
-    """Downloads the image and sends it to Gemini. Returns BOTH the JSON and the image data."""
-    if not API_KEY:
-        st.error("!!! ERROR: GEMINI_API_KEY is not set. Please run the SET command in Command Prompt.")
-        return None, None
+    if not API_KEY: return None, None
 
+    # 1. Download Image
     try:
-        # 1. Download the image file (Robust way with Headers)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(image_url, headers=headers)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(image_url, headers=headers, timeout=10)
         response.raise_for_status() 
-        image_bytes = response.content 
-
-        # 2. Prepare data for Gemini
-        content = [
-            types.Part.from_bytes(data=image_bytes, mime_type='image/jpeg'),
-            "List key objects in this image for an Italian lesson."
-        ]
-        
-        # 3. Call Gemini API
-        client = genai.Client(api_key=API_KEY)
-        gemini_response = client.models.generate_content(
-            model=GEMINI_MODEL,
-            contents=content,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
-        )
-        
-        # 4. Parse JSON
-        json_text = gemini_response.text.strip('```json\n').strip('\n```')
-        return json.loads(json_text), image_bytes
-        
+        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
+        image_bytes = response.content
     except Exception as e:
-        st.error(f"Error processing image: {e}")
+        st.error(f"Image Download Error: {e}")
         return None, None
 
-# --- MAIN APP LAYOUT ---
+    # 2. Call Gemini with RETRY Loop
+    client = genai.Client(api_key=API_KEY)
+    content = [types.Part.from_bytes(data=image_bytes, mime_type=content_type), "Create a TPRS lesson."]
+    
+    # Try 3 times to get an answer
+    for attempt in range(3):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MODEL, 
+                contents=content,
+                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
+            )
+            # If successful, parse and return immediately
+            return json.loads(resp.text.replace('```json', '').replace('```', '').strip()), image_bytes
+        
+        except Exception as e:
+            # If it's the "Overloaded" error (503), wait and try again
+            if "503" in str(e) or "Overloaded" in str(e):
+                time.sleep(2) # Wait 2 seconds
+                continue # Try loop again
+            else:
+                # If it's a real error (like bad API key), stop.
+                st.error(f"AI Error: {e}")
+                return None, None
+    
+    # If we tried 3 times and still failed:
+    st.error("Server is very busy (Tried 3 times). Please wait a moment and try again.")
+    return None, None
 
-st.title("🇮🇹 Vista Vocale: Audio Edition")
-st.write("Enter an image URL below to generate an instant Italian lesson with pronunciation.")
+# --- MAIN LAYOUT ---
+st.title("🇮🇹 Vista Vocale")
 
-# Default URL
-default_url = "https://i.imgur.com/8QzL0jT.jpeg"
-image_url = st.text_input("Image URL:", default_url)
+tab_search, tab_paste = st.tabs(["🔍 Search", "🔗 Paste URL"])
+final_image_url = None
+start_analysis = False
 
-if st.button("Analyze Image"):
-    if image_url:
-        with st.spinner("Gemini is analyzing and Bella is preparing her voice..."):
-            # Run the analysis
-            lesson_data, displayed_image = analyze_image_lesson(image_url)
+with tab_search:
+    c1, c2 = st.columns([3, 1])
+    with c1: search_query = st.text_input("Topic:", placeholder="Italian Market", label_visibility="collapsed")
+    with c2: 
+        if st.button("Search"):
+            if search_query:
+                with st.spinner("Searching..."):
+                    found_url = search_image(search_query)
+                    if found_url: 
+                        final_image_url = found_url; start_analysis = True
+                    else: st.warning("No images found.")
 
-            if lesson_data and displayed_image:
-                st.success("Lesson Generated!")
+with tab_paste:
+    c1, c2 = st.columns([3, 1])
+    with c1: pasted_url = st.text_input("URL:", "https://upload.wikimedia.org/wikipedia/commons/d/d6/Gondola_Venice_2016.jpg", label_visibility="collapsed")
+    with c2: 
+        if st.button("Go"): final_image_url = pasted_url; start_analysis = True
+
+st.markdown("---")
+
+if start_analysis and final_image_url:
+    with st.spinner("Gemini is creating the lesson... (Auto-retrying if busy)"):
+        lesson_data, img_bytes = analyze_image_lesson(final_image_url)
+
+        if lesson_data:
+            col_img, col_content = st.columns([1, 1.3])
+            
+            with col_img: st.image(img_bytes, use_container_width=True)
+
+            with col_content:
+                t1, t2, t3 = st.tabs(["1. Vocabulary", "2. Conversation", "3. Story"])
                 
-                col1, col2 = st.columns([1, 1.2]) # Make right column slightly wider
-                
-                with col1:
-                    st.image(displayed_image, caption="Lesson Image", use_container_width=True)
-
-                with col2:
-                    st.subheader("Vocabulary & Audio")
-                    st.markdown("---") # Visual separator
-                    
+                with t1:
                     if 'vocabulary' in lesson_data:
-                        # Iterate through each item to display it beautifully
                         for item in lesson_data['vocabulary']:
-                            
-                            # 1. Display the Word
-                            st.markdown(f"### 🇮🇹 **{item['italian_word']}** _({item['object_name']})_")
-                            
-                            # 2. Display the Sentence
-                            st.write(f"_{item['italian_sentence']}_")
-                            st.caption(f"({item['english_translation']})")
-                            
-                            # 3. Generate and Display Audio Player
-                            # We combine the word and the sentence for the audio
-                            audio_text = f"{item['italian_word']}... {item['italian_sentence']}"
-                            audio_bytes = get_audio_bytes(audio_text)
-                            if audio_bytes:
-                                st.audio(audio_bytes, format='audio/mp3')
-                            
-                            st.markdown("---") # Divider between items
-                    else:
-                        st.warning("No vocabulary found in response.")
+                            c1, c2, c3 = st.columns([1.5, 2.5, 0.5])
+                            with c1:
+                                st.markdown(f"**{item['italian_word']}**")
+                                if not teacher_mode: st.caption(item['object_name'])
+                            with c2:
+                                st.markdown(f"_{item['italian_sentence']}_")
+                                if not teacher_mode: st.write(item['english_translation']) 
+                            with c3:
+                                ab = get_audio_bytes(f"{item['italian_word']}... {item['italian_sentence']}")
+                                if ab: st.audio(ab, format='audio/mp3')
+                            st.divider()
+
+                with t2:
+                    if 'conversation' in lesson_data:
+                        for turn in lesson_data['conversation']:
+                            c1, c2 = st.columns([4, 1])
+                            with c1:
+                                st.markdown(f"**{turn['speaker']}:** {turn['italian']}")
+                                if not teacher_mode: st.caption(f"({turn['english']})")
+                            with c2:
+                                ab = get_audio_bytes(turn['italian'])
+                                if ab: st.audio(ab, format='audio/mp3')
+                            st.divider()
+
+                with t3:
+                    if 'story' in lesson_data:
+                        for chunk in lesson_data['story']:
+                            c1, c2 = st.columns([4, 1])
+                            with c1:
+                                st.markdown(f"📖 **{chunk['italian']}**")
+                                if not teacher_mode: st.caption(chunk['english'])
+                            with c2:
+                                ab = get_audio_bytes(chunk['italian'])
+                                if ab: st.audio(ab, format='audio/mp3')
+                            st.markdown("")
