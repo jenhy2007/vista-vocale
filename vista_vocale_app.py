@@ -37,18 +37,20 @@ def get_best_model_name():
         data = response.json()
         models = data.get('models', [])
         
-        # We look for specific trusted models in this order
+        # --- CHANGED PRIORITY LIST ---
+        # We now put the STABLE 1.5 models first to avoid the "429 Limit" error
         priority_list = [
-            "gemini-2.0-flash-exp", # The smart new one
             "gemini-1.5-flash",
             "gemini-1.5-flash-latest",
             "gemini-1.5-flash-001",
+            "gemini-1.5-pro"
         ]
         
         # 1. Try to find a match from our priority list
         for priority in priority_list:
             for m in models:
                 if priority in m['name']:
+                    # Returns e.g. "models/gemini-1.5-flash"
                     return m['name'], None
 
         # 2. Fallback: Find ANY model that supports 'generateContent'
@@ -102,9 +104,11 @@ def call_gemini_direct(image_bytes, model_name):
             return None, f"API Error ({response.status_code}): {response.text}"
             
         result = response.json()
-        # Safe extraction of text
+        
         if 'candidates' in result and result['candidates']:
              text_content = result['candidates'][0]['content']['parts'][0]['text']
+             # Clean up potential markdown formatting
+             text_content = text_content.replace('```json', '').replace('```', '')
              return json.loads(text_content), None
         else:
              return None, "AI returned no content."
@@ -127,6 +131,7 @@ st.title("🇮🇹 Vista Vocale")
 if model_error:
     st.error(f"⚠️ Could not find models: {model_error}")
 else:
+    # This should now say "gemini-1.5-flash" (The Reliable One)
     st.caption(f"✨ Connected to: `{valid_model_name}`")
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
@@ -168,7 +173,6 @@ if final_image_bytes:
                     vocab_list = lesson_data.get('vocabulary', [])
                     if isinstance(vocab_list, list):
                         for item in vocab_list:
-                            # Defensive check: Is it a dictionary?
                             if isinstance(item, dict):
                                 c1, c2 = st.columns([3, 1])
                                 with c1:
@@ -186,15 +190,13 @@ if final_image_bytes:
                         for turn in chat_list:
                             c1, c2 = st.columns([3, 1])
                             with c1:
-                                # Defensive check: Dictionary vs String
                                 if isinstance(turn, dict):
                                     speaker = turn.get('speaker', 'Speaker')
                                     italian = turn.get('italian', '')
                                     st.markdown(f"**{speaker}**: {italian}")
                                 else:
-                                    # Fallback if AI sent just a string
                                     st.markdown(str(turn))
-                                    italian = str(turn) # for audio
+                                    italian = str(turn)
                                     
                             with c2:
                                 ab = get_audio_bytes(italian)
@@ -208,7 +210,6 @@ if final_image_bytes:
                         for chunk in story_list:
                             c1, c2 = st.columns([3, 1])
                             with c1:
-                                # Defensive check
                                 if isinstance(chunk, dict):
                                     text = chunk.get('italian', '')
                                     st.markdown(f"📖 {text}")
