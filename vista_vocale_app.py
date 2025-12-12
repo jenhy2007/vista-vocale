@@ -1,27 +1,32 @@
+import os
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 import requests
 from io import BytesIO
 import json
 from gtts import gTTS
+from duckduckgo_search import DDGS
 import warnings
 import time
+from PIL import Image
 
 # --- 1. SILENCE WARNINGS ---
 warnings.filterwarnings("ignore")
 
 # --- CONFIGURATION ---
-# We use st.secrets directly to be 100% sure the key is found
+# We use the standard, stable model name
+GEMINI_MODEL_NAME = "gemini-1.5-flash"
+
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
     st.error("❌ CRITICAL ERROR: API Key missing from Secrets!")
     st.stop()
 
-GEMINI_MODEL = "gemini-1.5-flash-001"
+# Configure the "Old Reliable" Library
+genai.configure(api_key=API_KEY)
 
-# --- CUSTOM STYLING ---
+# --- STYLING ---
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 20px !important; padding: 12px !important; }
@@ -58,39 +63,41 @@ def get_audio_bytes(text, lang='it'):
         return fp
     except: return None
 
-# --- ANALYSIS WITH DEBUGGING ---
+# --- ANALYSIS FUNCTION (Using google-generativeai) ---
 @st.cache_data(show_spinner=False)
 def generate_lesson_from_bytes(image_bytes, mime_type):
-    client = genai.Client(api_key=API_KEY)
-    content = [types.Part.from_bytes(data=image_bytes, mime_type=mime_type), "Create a TPRS lesson."]
+    # Load the model using the stable library
+    model = genai.GenerativeModel(GEMINI_MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
     
+    # Convert bytes to a PIL Image (The old library loves PIL Images)
+    try:
+        image = Image.open(BytesIO(image_bytes))
+    except:
+        return None, "Could not process image data."
+
     # Retry logic
     last_error = None
     for attempt in range(3):
         try:
-            resp = client.models.generate_content(
-                model=GEMINI_MODEL, 
-                contents=content,
-                config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
+            # The generation call
+            response = model.generate_content(
+                [image, "Create a TPRS lesson."],
+                generation_config={"response_mime_type": "application/json"}
             )
-            # Try to parse JSON
-            cleaned_text = resp.text.replace('```json', '').replace('```', '').strip()
-            return json.loads(cleaned_text), None # Success, No error
+            
+            # Parse JSON
+            return json.loads(response.text), None
             
         except Exception as e:
             last_error = e
-            # If overloaded, wait and retry
-            if "503" in str(e) or "Overloaded" in str(e):
+            if "429" in str(e) or "quota" in str(e).lower():
                 time.sleep(2)
                 continue
-            # If JSON error, we want to stop and see the raw text
-            if "Expecting value" in str(e):
-                return None, f"JSON Error. Raw Text: {resp.text}"
             
     return None, str(last_error)
 
 # --- MAIN LAYOUT ---
-st.title("🇮🇹 Vista Vocale: Debug Mode")
+st.title("🇮🇹 Vista Vocale")
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
 
@@ -125,13 +132,11 @@ st.markdown("---")
 
 # --- RESULT ---
 if start_analysis and final_image_bytes:
-    with st.spinner("Analyzing..."):
+    with st.spinner("Analyzing with Stable 1.5 Flash..."):
         lesson_data, error_msg = generate_lesson_from_bytes(final_image_bytes, final_mime_type)
 
-        # *** ERROR CATCHER ***
         if error_msg:
-            st.error(f"⚠️ TECHNICAL ERROR: {error_msg}")
-            st.info("Please tell Jen the error message above!")
+            st.error(f"⚠️ ERROR: {error_msg}")
         
         elif lesson_data:
             st.image(final_image_bytes, use_container_width=True)
@@ -174,7 +179,3 @@ if start_analysis and final_image_bytes:
                             ab = get_audio_bytes(chunk['italian'])
                             if ab: st.audio(ab, format='audio/mp3')
                         st.markdown("")
-
-
-
-
