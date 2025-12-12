@@ -8,14 +8,36 @@ import json
 from gtts import gTTS
 from duckduckgo_search import DDGS
 import warnings
-import time # We need time to wait between retries
+import time
 
 # --- 1. SILENCE WARNINGS ---
 warnings.filterwarnings("ignore")
 
 # --- CONFIGURATION ---
 API_KEY = os.environ.get("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.5-flash"
+# Using the stable model for reliability
+GEMINI_MODEL = "gemini-1.5-flash"
+
+# --- 2. CUSTOM STYLING (BIG TEXT FOR MOBILE) ---
+st.markdown("""
+    <style>
+    /* Bigger Tabs */
+    button[data-baseweb="tab"] {
+        font-size: 20px !important;
+        font-weight: bold !important;
+        padding: 12px !important;
+    }
+    /* Bigger Headers */
+    h1 { font-size: 2.5rem !important; }
+    h2 { font-size: 2.0rem !important; color: #008000; } 
+    h3 { font-size: 1.5rem !important; }
+    /* Bigger Body Text */
+    p, li, .stMarkdown { font-size: 1.2rem !important; }
+    /* Hide the 'Deploy' button hamburger menu on mobile if possible to clean UI */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    </style>
+""", unsafe_allow_html=True)
 
 # --- SYSTEM PROMPT ---
 SYSTEM_INSTRUCTION = """
@@ -49,16 +71,9 @@ st.set_page_config(page_title="Vista Vocale", layout="wide")
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Settings")
-    teacher_mode = st.checkbox("🎓 Teacher Mode", value=False, help="Hide English text for quizzing.")
-    st.info("Tip: If Search fails, try the 'Paste URL' tab.")
+    teacher_mode = st.checkbox("🎓 Teacher Mode", value=False, help="Hide English text.")
 
 # --- FUNCTIONS ---
-def search_image(query):
-    try:
-        results = DDGS().images(keywords=query, max_results=1)
-        if results: return results[0]['image']
-        return None
-    except: return None
 
 def get_audio_bytes(text, lang='it'):
     try:
@@ -69,27 +84,15 @@ def get_audio_bytes(text, lang='it'):
         return fp
     except: return None
 
-# --- CACHING WITH RETRY LOGIC ---
+# --- CORE ANALYSIS FUNCTION (Now accepts RAW BYTES for stability) ---
 @st.cache_data(show_spinner=False)
-def analyze_image_lesson(image_url):
-    if not API_KEY: return None, None
+def generate_lesson_from_bytes(image_bytes, mime_type):
+    if not API_KEY: return None
 
-    # 1. Download Image
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(image_url, headers=headers, timeout=10)
-        response.raise_for_status() 
-        content_type = response.headers.get('Content-Type', '').split(';')[0].strip()
-        image_bytes = response.content
-    except Exception as e:
-        st.error(f"Image Download Error: {e}")
-        return None, None
-
-    # 2. Call Gemini with RETRY Loop
     client = genai.Client(api_key=API_KEY)
-    content = [types.Part.from_bytes(data=image_bytes, mime_type=content_type), "Create a TPRS lesson."]
+    content = [types.Part.from_bytes(data=image_bytes, mime_type=mime_type), "Create a TPRS lesson."]
     
-    # Try 3 times to get an answer
+    # Retry logic for stability
     for attempt in range(3):
         try:
             resp = client.models.generate_content(
@@ -97,97 +100,106 @@ def analyze_image_lesson(image_url):
                 contents=content,
                 config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION)
             )
-            # If successful, parse and return immediately
-            return json.loads(resp.text.replace('```json', '').replace('```', '').strip()), image_bytes
-        
+            return json.loads(resp.text.replace('```json', '').replace('```', '').strip())
         except Exception as e:
-            # If it's the "Overloaded" error (503), wait and try again
             if "503" in str(e) or "Overloaded" in str(e):
-                time.sleep(2) # Wait 2 seconds
-                continue # Try loop again
-            else:
-                # If it's a real error (like bad API key), stop.
-                st.error(f"AI Error: {e}")
-                return None, None
-    
-    # If we tried 3 times and still failed:
-    st.error("Server is very busy (Tried 3 times). Please wait a moment and try again.")
-    return None, None
+                time.sleep(2)
+                continue
+            return None
+    return None
 
 # --- MAIN LAYOUT ---
 st.title("🇮🇹 Vista Vocale")
 
-tab_search, tab_paste = st.tabs(["🔍 Search", "🔗 Paste URL"])
-final_image_url = None
+# TABS: Upload is now #1
+t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
+
+final_image_bytes = None
+final_mime_type = "image/jpeg"
 start_analysis = False
 
-with tab_search:
-    c1, c2 = st.columns([3, 1])
-    with c1: search_query = st.text_input("Topic:", placeholder="Italian Market", label_visibility="collapsed")
-    with c2: 
-        if st.button("Search"):
-            if search_query:
-                with st.spinner("Searching..."):
-                    found_url = search_image(search_query)
-                    if found_url: 
-                        final_image_url = found_url; start_analysis = True
-                    else: st.warning("No images found.")
+# --- TAB 1: SNAP / UPLOAD ---
+with t_upload:
+    uploaded_file = st.file_uploader("Take a photo or upload:", type=["jpg", "png", "jpeg", "webp"])
+    if uploaded_file:
+        # Convert to bytes immediately to keep it stable
+        final_image_bytes = uploaded_file.getvalue()
+        final_mime_type = uploaded_file.type
+        start_analysis = True
 
-with tab_paste:
-    c1, c2 = st.columns([3, 1])
-    with c1: pasted_url = st.text_input("URL:", "https://upload.wikimedia.org/wikipedia/commons/d/d6/Gondola_Venice_2016.jpg", label_visibility="collapsed")
-    with c2: 
-        if st.button("Go"): final_image_url = pasted_url; start_analysis = True
+# --- TAB 2: GALLERY (Backup) ---
+with t_gallery:
+    IMAGE_GALLERY = {
+        "Select...": None,
+        "☕ Espresso": "https://upload.wikimedia.org/wikipedia/commons/4/45/A_small_cup_of_coffee.JPG",
+        "🛶 Venice": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Gondola_Venice_2016.jpg",
+        "🏛️ Colosseum": "https://upload.wikimedia.org/wikipedia/commons/d/de/Colosseo_2020.jpg"
+    }
+    selected_name = st.selectbox("Or choose a scene:", list(IMAGE_GALLERY.keys()))
+    if selected_name and IMAGE_GALLERY[selected_name]:
+        try:
+            # Download the gallery image to bytes so the logic is the same
+            resp = requests.get(IMAGE_GALLERY[selected_name], headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            if resp.status_code == 200:
+                final_image_bytes = resp.content
+                final_mime_type = "image/jpeg"
+                start_analysis = True
+        except:
+            st.warning("Could not load gallery image.")
 
 st.markdown("---")
 
-if start_analysis and final_image_url:
-    with st.spinner("Gemini is creating the lesson... (Auto-retrying if busy)"):
-        lesson_data, img_bytes = analyze_image_lesson(final_image_url)
+# --- LESSON DISPLAY ---
+if start_analysis and final_image_bytes:
+    with st.spinner("🇮🇹 Bella sta guardando la tua foto... (Analyzing)"):
+        # Send the BYTES to the cached function
+        lesson_data = generate_lesson_from_bytes(final_image_bytes, final_mime_type)
 
         if lesson_data:
-            col_img, col_content = st.columns([1, 1.3])
+            # Mobile-friendly layout: Image on top, tabs below
+            st.image(final_image_bytes, use_container_width=True)
             
-            with col_img: st.image(img_bytes, use_container_width=True)
+            t1, t2, t3 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY"])
+            
+            # 1. VOCABULARY
+            with t1:
+                if 'vocabulary' in lesson_data:
+                    for item in lesson_data['vocabulary']:
+                        c1, c2 = st.columns([2, 1])
+                        with c1:
+                            st.markdown(f"**{item['italian_word']}**")
+                            st.markdown(f"_{item['italian_sentence']}_")
+                            if not teacher_mode: 
+                                st.caption(f"{item['object_name']} • {item['english_translation']}")
+                        with c2:
+                            ab = get_audio_bytes(f"{item['italian_word']}... {item['italian_sentence']}")
+                            if ab: st.audio(ab, format='audio/mp3')
+                        st.divider()
 
-            with col_content:
-                t1, t2, t3 = st.tabs(["1. Vocabulary", "2. Conversation", "3. Story"])
-                
-                with t1:
-                    if 'vocabulary' in lesson_data:
-                        for item in lesson_data['vocabulary']:
-                            c1, c2, c3 = st.columns([1.5, 2.5, 0.5])
-                            with c1:
-                                st.markdown(f"**{item['italian_word']}**")
-                                if not teacher_mode: st.caption(item['object_name'])
-                            with c2:
-                                st.markdown(f"_{item['italian_sentence']}_")
-                                if not teacher_mode: st.write(item['english_translation']) 
-                            with c3:
-                                ab = get_audio_bytes(f"{item['italian_word']}... {item['italian_sentence']}")
-                                if ab: st.audio(ab, format='audio/mp3')
-                            st.divider()
+            # 2. CONVERSATION
+            with t2:
+                if 'conversation' in lesson_data:
+                    for turn in lesson_data['conversation']:
+                        c1, c2 = st.columns([3, 1])
+                        with c1:
+                            st.markdown(f"**{turn['speaker']}:** {turn['italian']}")
+                            if not teacher_mode: st.caption(f"({turn['english']})")
+                        with c2:
+                            ab = get_audio_bytes(turn['italian'])
+                            if ab: st.audio(ab, format='audio/mp3')
+                        st.divider()
 
-                with t2:
-                    if 'conversation' in lesson_data:
-                        for turn in lesson_data['conversation']:
-                            c1, c2 = st.columns([4, 1])
-                            with c1:
-                                st.markdown(f"**{turn['speaker']}:** {turn['italian']}")
-                                if not teacher_mode: st.caption(f"({turn['english']})")
-                            with c2:
-                                ab = get_audio_bytes(turn['italian'])
-                                if ab: st.audio(ab, format='audio/mp3')
-                            st.divider()
-
-                with t3:
-                    if 'story' in lesson_data:
-                        for chunk in lesson_data['story']:
-                            c1, c2 = st.columns([4, 1])
-                            with c1:
-                                st.markdown(f"📖 **{chunk['italian']}**")
-                                if not teacher_mode: st.caption(chunk['english'])
-                            with c2:
-                                ab = get_audio_bytes(chunk['italian'])
-                                if ab: st.audio(ab, format='audio/mp3')
-                            st.markdown("")
+            # 3. STORY
+            with t3:
+                if 'story' in lesson_data:
+                    for chunk in lesson_data['story']:
+                        c1, c2 = st.columns([3, 1])
+                        with c1:
+                            st.markdown(f"📖 **{chunk['italian']}**")
+                            if not teacher_mode: st.caption(chunk['english'])
+                        with c2:
+                            ab = get_audio_bytes(chunk['italian'])
+                            if ab: st.audio(ab, format='audio/mp3')
+                        st.markdown("")
+        else:
+            st.error("Could not analyze image. Try a clearer photo!")
