@@ -18,7 +18,13 @@ except:
 # --- STYLING ---
 st.markdown("""
     <style>
-    button[data-baseweb="tab"] { font-size: 18px !important; padding: 10px !important; }
+    /* Compact Tabs for Mobile */
+    button[data-baseweb="tab"] { 
+        font-size: 16px !important; 
+        padding: 8px 12px !important; 
+        min-width: 0px !important;
+        flex: 1 1 auto;
+    }
     h1 { font-size: 2.2rem !important; }
     p, li { font-size: 1.1rem !important; }
     [data-testid="stDownloadButton"] > button { width: 100%; }
@@ -92,7 +98,7 @@ def load_gallery_image(url):
     except Exception as e:
         return None
 
-# --- 3. HELPER: TEXT FILE GENERATOR (FIXED) ---
+# --- 3. HELPER: TEXT FILE GENERATOR ---
 def create_lesson_file(data, lang_name):
     text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n"
     text += "==========================================\n\n"
@@ -101,7 +107,6 @@ def create_lesson_file(data, lang_name):
     text += "-------------\n"
     for item in data.get('vocabulary', []):
         if isinstance(item, dict):
-            # Fallback to empty string if key is missing
             word = item.get('target_word', '')
             obj = item.get('object_name', '')
             sent = item.get('target_sentence', '')
@@ -131,7 +136,6 @@ def create_lesson_file(data, lang_name):
             eng = chunk.get('english', '')
             
             text += f"{target}\n"
-            # Explicitly add the English line with a check
             if eng:
                 text += f"({eng})\n\n"
             else:
@@ -237,7 +241,7 @@ if final_image_bytes:
     with c2:
         st.image(final_image_bytes, use_container_width=True)
         
-        # --- NEW: LANGUAGE SELECTOR IN MAIN COLUMN ---
+        # --- LANGUAGE SELECTOR ---
         selected_lang_key = st.selectbox(
             "Select Target Language:", 
             list(LANG_CONFIG.keys()),
@@ -254,17 +258,19 @@ if final_image_bytes:
                 if error:
                     st.error(error)
                 elif lesson_data:
-                    # Save results to session state so they persist if you change tabs
+                    # Save results
                     st.session_state['lesson_data'] = lesson_data
                     st.session_state['current_lang'] = current_lang
 
-    # --- DISPLAY RESULTS (Outside Columns) ---
+    # --- DISPLAY RESULTS ---
     if 'lesson_data' in st.session_state:
         data = st.session_state['lesson_data']
         lang = st.session_state['current_lang']
         
         st.markdown("---")
-        t1, t2, t3, t4, t5 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY", "🇺🇸 TRANSLATION", "🖨️ SAVE"])
+        
+        # --- COMPACT TABS (Renamed to fit on one line) ---
+        t1, t2, t3, t4, t5 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save"])
         
         # --- TAB 1: VOCAB ---
         with t1:
@@ -320,7 +326,7 @@ if final_image_bytes:
 
         # --- TAB 4: TRANSLATIONS ---
         with t4:
-            st.header("🇺🇸 English Translations")
+            st.header("🇺🇸 Answer Key")
             st.subheader("1. Vocabulary")
             if isinstance(vocab_list, list):
                 for item in vocab_list:
@@ -345,13 +351,11 @@ if final_image_bytes:
 
         # --- TAB 5: PRINT / SAVE ---
         with t5:
-            st.header("🖨️ Save Lesson Plan")
-            
-            # Use the FIXED generator function
+            st.header("💾 Download")
             lesson_text = create_lesson_file(data, lang['name'])
             
             st.download_button(
-                label=f"📥 Download {lang['name']} Lesson",
+                label=f"📥 Download (.txt)",
                 data=lesson_text,
                 file_name=f"{lang['name']}_Lesson.txt",
                 mime="text/plain"
