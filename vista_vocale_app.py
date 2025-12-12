@@ -19,7 +19,7 @@ except:
     st.error("❌ CRITICAL ERROR: API Key missing from Secrets!")
     st.stop()
 
-GEMINI_MODEL = "gemini-2.0-flash-exp"
+GEMINI_MODEL = "gemini-1.5-flash-002"
 
 # --- CUSTOM STYLING ---
 st.markdown("""
@@ -174,5 +174,6 @@ if start_analysis and final_image_bytes:
                             ab = get_audio_bytes(chunk['italian'])
                             if ab: st.audio(ab, format='audio/mp3')
                         st.markdown("")
+
 
 
