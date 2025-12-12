@@ -61,7 +61,19 @@ def get_best_model_name():
 
 valid_model_name, model_error = get_best_model_name()
 
-# --- 2. DIRECT API CALL ---
+# --- 2. GALLERY DOWNLOADER (FIXED) ---
+@st.cache_data(show_spinner=False)
+def load_gallery_image(url):
+    try:
+        # We MUST send a User-Agent or Wikimedia blocks us (403 Error)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status() # Check for errors
+        return response.content
+    except Exception as e:
+        return None
+
+# --- 3. DIRECT API CALL ---
 def call_gemini_direct(image_bytes, model_name):
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
@@ -131,19 +143,23 @@ with t_gallery:
     GALLERY = {
         "Select...": None,
         "☕ Espresso": "https://upload.wikimedia.org/wikipedia/commons/4/45/A_small_cup_of_coffee.JPG",
-        "🛶 Venice": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Gondola_Venice_2016.jpg"
+        "🛶 Venice": "https://upload.wikimedia.org/wikipedia/commons/d/d6/Gondola_Venice_2016.jpg",
+        "🍝 Pasta": "https://upload.wikimedia.org/wikipedia/commons/2/22/Breville_smart_oven_air_fryer_pasta_bake.jpg",
+        "🏛️ Colosseum": "https://upload.wikimedia.org/wikipedia/commons/d/de/Colosseo_2020.jpg"
     }
     choice = st.selectbox("Choose scene:", list(GALLERY.keys()))
     if choice and GALLERY[choice]:
-        try:
-            final_image_bytes = requests.get(GALLERY[choice]).content
-        except: st.warning("Gallery Load Error")
+        # Use the fixed downloader with headers
+        loaded_bytes = load_gallery_image(GALLERY[choice])
+        if loaded_bytes:
+            final_image_bytes = loaded_bytes
+        else:
+            st.error("⚠️ Could not download image from Wikimedia. Try 'Snap Photo' instead.")
 
 st.markdown("---")
 
 if final_image_bytes:
-    # --- LAYOUT CHANGE 1: SMALLER IMAGE ---
-    # We use columns to center the image and limit width
+    # --- SMALLER IMAGE LAYOUT ---
     c1, c2, c3 = st.columns([1, 2, 1]) 
     with c2:
         st.image(final_image_bytes, use_container_width=True)
@@ -155,7 +171,7 @@ if final_image_bytes:
             if error:
                 st.error(error)
             elif lesson_data:
-                # --- LAYOUT CHANGE 2: 4TH TAB FOR TRANSLATIONS ---
+                # --- 4 TABS LAYOUT ---
                 t1, t2, t3, t4 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY", "🇺🇸 TRANSLATION"])
                 
                 # --- TAB 1: VOCAB (Italian Only) ---
@@ -210,7 +226,7 @@ if final_image_bytes:
                                 if ab: st.audio(ab, format='audio/mp3')
                             st.divider()
 
-                # --- TAB 4: TRANSLATIONS (The Answer Key) ---
+                # --- TAB 4: TRANSLATIONS (Answer Key) ---
                 with t4:
                     st.header("🇺🇸 English Translations")
                     
