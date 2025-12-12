@@ -110,13 +110,13 @@ def create_lesson_file(data, lang_name):
     for item in data.get('vocabulary', []):
         if isinstance(item, dict):
             word = item.get('target_word', '')
-            pron = item.get('pronunciation', '') # Get Pinyin
+            pron = item.get('pronunciation', '')
             obj = item.get('object_name', '')
             sent = item.get('target_sentence', '')
             trans = item.get('english_translation', '')
             
             text += f"* {word} ({obj})\n"
-            if pron: text += f"  [{pron}]\n" # Add Pinyin line
+            if pron: text += f"  [{pron}]\n"
             text += f"  - {sent}\n"
             text += f"  - {trans}\n\n"
 
@@ -158,7 +158,6 @@ def call_gemini_direct(image_bytes, model_name, lang_config):
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
-    # --- PROMPT UPDATED FOR PINYIN ---
     prompt_text = f"""
     You are an expert TPRS {lang_config['name']} teacher.
     Analyze the image and create a lesson strictly following these rules:
@@ -284,8 +283,14 @@ if final_image_bytes:
             with st.spinner("Analyzing..."):
                 lesson_data, error = call_gemini_direct(final_image_bytes, valid_model_name, current_lang)
                 
+                # --- NEW ERROR HANDLING MASK ---
                 if error:
-                    st.error(error)
+                    # Check for "429" (Too Many Requests) or "Quota" keywords
+                    if "429" in str(error) or "Quota" in str(error) or "RESOURCE_EXHAUSTED" in str(error):
+                        st.warning("⚠️ The system is busy, please try again later.")
+                    else:
+                        st.error(error) # Show real error for other things (like network issues)
+                
                 elif lesson_data:
                     # Save results
                     st.session_state['lesson_data'] = lesson_data
