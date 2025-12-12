@@ -30,6 +30,8 @@ st.markdown("""
     [data-testid="stDownloadButton"] > button { width: 100%; }
     /* Center the selectbox text */
     div[data-baseweb="select"] { text-align: center; }
+    /* Pinyin Styling */
+    .pinyin { color: #888; font-size: 0.9rem; font-style: italic; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -108,11 +110,13 @@ def create_lesson_file(data, lang_name):
     for item in data.get('vocabulary', []):
         if isinstance(item, dict):
             word = item.get('target_word', '')
+            pron = item.get('pronunciation', '') # Get Pinyin
             obj = item.get('object_name', '')
             sent = item.get('target_sentence', '')
             trans = item.get('english_translation', '')
             
             text += f"* {word} ({obj})\n"
+            if pron: text += f"  [{pron}]\n" # Add Pinyin line
             text += f"  - {sent}\n"
             text += f"  - {trans}\n\n"
 
@@ -122,10 +126,12 @@ def create_lesson_file(data, lang_name):
         if isinstance(turn, dict):
             speaker = turn.get('speaker', '')
             target = turn.get('target_text', '')
+            pron = turn.get('pronunciation', '')
             eng = turn.get('english', '')
             
             text += f"{speaker}: {target}\n"
-            text += f"   ({eng})\n"
+            if pron: text += f"      [{pron}]\n"
+            text += f"      ({eng})\n"
     text += "\n"
 
     text += "3. STORY\n"
@@ -133,9 +139,12 @@ def create_lesson_file(data, lang_name):
     for chunk in data.get('story', []):
         if isinstance(chunk, dict):
             target = chunk.get('target_text', '')
+            pron = chunk.get('pronunciation', '')
             eng = chunk.get('english', '')
             
             text += f"{target}\n"
+            if pron: text += f"[{pron}]\n"
+            
             if eng:
                 text += f"({eng})\n\n"
             else:
@@ -149,20 +158,40 @@ def call_gemini_direct(image_bytes, model_name, lang_config):
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
+    # --- PROMPT UPDATED FOR PINYIN ---
     prompt_text = f"""
     You are an expert TPRS {lang_config['name']} teacher.
-    Analyze the image and create a lesson that STRICTLY follows these rules:
+    Analyze the image and create a lesson strictly following these rules:
     
-    1. Select 5 High-Frequency Vocabulary words visible in the image (in {lang_config['name']}).
-    2. Create a simple Conversation that uses ONLY these 5 words and "Super 7" verbs: {lang_config['super7']}.
-    3. Create a Story (5-6 sentences) that RECYCLES the 5 vocabulary words.
-    4. Keep the level strictly A1 (Beginner). 
+    1. Select 5 High-Frequency Vocabulary words visible in the image.
+    2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: {lang_config['super7']}.
+    3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
+    4. Keep level A1 (Beginner).
+
+    CRITICAL INSTRUCTION:
+    If the language is CHINESE (Mandarin), you MUST fill the "pronunciation" field with Pinyin (with tone marks).
+    If the language is Italian or French, leave the "pronunciation" field empty string "".
     
-    Return JSON strictly following this structure (use keys exactly as shown):
+    Return JSON structure:
     {{
-      "vocabulary": [{{"target_word": "word", "target_sentence": "sentence", "english_translation": "eng trans", "object_name": "eng object name"}}],
-      "conversation": [{{"speaker": "Name", "target_text": "text", "english": "eng trans"}}],
-      "story": [{{"target_text": "sentence", "english": "eng trans"}}]
+      "vocabulary": [{{
+          "target_word": "word", 
+          "pronunciation": "pinyin OR empty", 
+          "target_sentence": "sentence", 
+          "english_translation": "eng trans", 
+          "object_name": "eng object name"
+      }}],
+      "conversation": [{{
+          "speaker": "Name", 
+          "target_text": "text", 
+          "pronunciation": "pinyin OR empty",
+          "english": "eng trans"
+      }}],
+      "story": [{{
+          "target_text": "sentence", 
+          "pronunciation": "pinyin OR empty",
+          "english": "eng trans"
+      }}]
     }}
     """
     
@@ -269,7 +298,7 @@ if final_image_bytes:
         
         st.markdown("---")
         
-        # --- COMPACT TABS (Renamed to fit on one line) ---
+        # --- COMPACT TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save"])
         
         # --- TAB 1: VOCAB ---
@@ -281,6 +310,10 @@ if final_image_bytes:
                         c1, c2 = st.columns([3, 1])
                         with c1:
                             st.markdown(f"**{item.get('target_word', '')}**")
+                            # --- PINYIN DISPLAY ---
+                            if item.get('pronunciation'):
+                                st.markdown(f"<div class='pinyin'>{item.get('pronunciation')}</div>", unsafe_allow_html=True)
+                            
                             st.markdown(f"_{item.get('target_sentence', '')}_")
                         with c2:
                             ab = get_audio_bytes(f"{item.get('target_word', '')}... {item.get('target_sentence', '')}", lang['code'])
@@ -297,7 +330,12 @@ if final_image_bytes:
                         if isinstance(turn, dict):
                             speaker = turn.get('speaker', 'Speaker')
                             text = turn.get('target_text', '')
+                            pron = turn.get('pronunciation', '')
+                            
                             st.markdown(f"**{speaker}**: {text}")
+                            # --- PINYIN DISPLAY ---
+                            if pron:
+                                st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
                         else:
                             st.markdown(str(turn))
                             text = str(turn)
@@ -315,7 +353,12 @@ if final_image_bytes:
                     with c1:
                         if isinstance(chunk, dict):
                             text = chunk.get('target_text', '')
+                            pron = chunk.get('pronunciation', '')
+                            
                             st.markdown(f"📖 {text}")
+                            # --- PINYIN DISPLAY ---
+                            if pron:
+                                st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
                         else:
                             text = str(chunk)
                             st.markdown(f"📖 {text}")
