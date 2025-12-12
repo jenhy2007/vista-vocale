@@ -4,7 +4,6 @@ import json
 import base64
 from io import BytesIO
 from gtts import gTTS
-from PIL import Image
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Vista Vocale", layout="wide")
@@ -54,40 +53,19 @@ LANG_CONFIG = {
     }
 }
 
-# --- 1. AUTO-DISCOVERY ---
+# --- 1. MODEL DISCOVERY (UPDATED) ---
 @st.cache_data
-def get_best_model_name():
+def get_available_models():
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
     try:
         response = requests.get(url)
         if response.status_code != 200:
-            return None, f"List Error: {response.status_code}"
-        
+            return []
         data = response.json()
-        models = data.get('models', [])
-        
-        priority_list = [
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-pro"
-        ]
-        
-        for priority in priority_list:
-            for m in models:
-                if priority in m['name']:
-                    return m['name'], None
-
-        for m in models:
-            if "generateContent" in m.get('supportedGenerationMethods', []):
-                return m['name'], None
-                
-        return "models/gemini-1.5-flash", None
-        
-    except Exception as e:
-        return None, str(e)
-
-valid_model_name, model_error = get_best_model_name()
+        # Filter for models that support generating content
+        return [m['name'] for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
+    except:
+        return []
 
 # --- 2. GALLERY DOWNLOADER ---
 @st.cache_data(show_spinner=False)
@@ -232,10 +210,23 @@ def get_audio_bytes(text, lang_code):
 # --- MAIN APP LAYOUT ---
 st.title("🌍 Vista Vocale")
 
-if model_error:
-    st.error(f"⚠️ Could not find models: {model_error}")
-else:
-    st.caption(f"✨ Connected to: `{valid_model_name}`")
+# --- DEBUG / SETTINGS SECTION ---
+# This helps us fix the "Busy" error by switching models
+with st.expander("⚙️ Settings & Debug (Click if stuck)"):
+    available_models = get_available_models()
+    if not available_models:
+        st.error("Could not list models. Check API Key.")
+        selected_model = "models/gemini-1.5-flash" # Fallback
+    else:
+        # Try to find flash 1.5 as default
+        default_ix = 0
+        for i, m in enumerate(available_models):
+            if "gemini-1.5-flash" in m and "001" not in m: # Prefer standard flash
+                default_ix = i
+                break
+        
+        selected_model = st.selectbox("Select AI Model:", available_models, index=default_ix)
+        st.caption("Tip: If '2.5' is busy, try '1.5-flash'.")
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
 final_image_bytes = None
@@ -281,15 +272,20 @@ if final_image_bytes:
         if st.button(f"Create {current_lang['name']} Lesson", type="primary", use_container_width=True):
             
             with st.spinner("Analyzing..."):
-                lesson_data, error = call_gemini_direct(final_image_bytes, valid_model_name, current_lang)
+                lesson_data, error = call_gemini_direct(final_image_bytes, selected_model, current_lang)
                 
-                # --- NEW ERROR HANDLING MASK ---
+                # --- NEW ERROR HANDLING ---
                 if error:
-                    # Check for "429" (Too Many Requests) or "Quota" keywords
+                    # Show the friendly message primarily
                     if "429" in str(error) or "Quota" in str(error) or "RESOURCE_EXHAUSTED" in str(error):
-                        st.warning("⚠️ The system is busy, please try again later.")
+                        st.warning("⚠️ The system is busy (Daily Limit reached for this model).")
+                        st.info("Try switching the model in '⚙️ Settings' below!")
                     else:
-                        st.error(error) # Show real error for other things (like network issues)
+                        st.error("An error occurred.")
+                    
+                    # Show the RAW error in an expander so you can copy-paste it to me
+                    with st.expander("Show Technical Error Details"):
+                        st.code(error)
                 
                 elif lesson_data:
                     # Save results
