@@ -18,16 +18,16 @@ except:
 # --- STYLING ---
 st.markdown("""
     <style>
-    button[data-baseweb="tab"] { font-size: 20px !important; padding: 12px !important; }
+    /* Bigger Tabs */
+    button[data-baseweb="tab"] { font-size: 18px !important; padding: 10px !important; }
     h1 { font-size: 2.2rem !important; }
     p, li { font-size: 1.1rem !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 1. AUTO-DISCOVERY FUNCTION ---
+# --- 1. AUTO-DISCOVERY (Stable Priority) ---
 @st.cache_data
 def get_best_model_name():
-    """Asks Google: 'Which models do you have?' and picks the best Vision model."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
     try:
         response = requests.get(url)
@@ -37,8 +37,7 @@ def get_best_model_name():
         data = response.json()
         models = data.get('models', [])
         
-        # --- CHANGED PRIORITY LIST ---
-        # We now put the STABLE 1.5 models first to avoid the "429 Limit" error
+        # Priority: Stable 1.5 first to avoid limits
         priority_list = [
             "gemini-1.5-flash",
             "gemini-1.5-flash-latest",
@@ -46,14 +45,11 @@ def get_best_model_name():
             "gemini-1.5-pro"
         ]
         
-        # 1. Try to find a match from our priority list
         for priority in priority_list:
             for m in models:
                 if priority in m['name']:
-                    # Returns e.g. "models/gemini-1.5-flash"
                     return m['name'], None
 
-        # 2. Fallback: Find ANY model that supports 'generateContent'
         for m in models:
             if "generateContent" in m.get('supportedGenerationMethods', []):
                 return m['name'], None
@@ -63,16 +59,13 @@ def get_best_model_name():
     except Exception as e:
         return None, str(e)
 
-# --- FIND THE MODEL AT STARTUP ---
 valid_model_name, model_error = get_best_model_name()
 
 # --- 2. DIRECT API CALL ---
 def call_gemini_direct(image_bytes, model_name):
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
-    
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
-    # We ask for a VERY specific structure to help the AI
     prompt_text = """
     You are an expert TPRS Italian teacher. Analyze the image and return a JSON object.
     Strictly follow this structure:
@@ -87,15 +80,10 @@ def call_gemini_direct(image_bytes, model_name):
         "contents": [{
             "parts": [
                 {"text": prompt_text},
-                {"inline_data": {
-                    "mime_type": "image/jpeg",
-                    "data": b64_image
-                }}
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}
             ]
         }],
-        "generation_config": {
-            "response_mime_type": "application/json"
-        }
+        "generation_config": {"response_mime_type": "application/json"}
     }
     
     try:
@@ -104,10 +92,8 @@ def call_gemini_direct(image_bytes, model_name):
             return None, f"API Error ({response.status_code}): {response.text}"
             
         result = response.json()
-        
         if 'candidates' in result and result['candidates']:
              text_content = result['candidates'][0]['content']['parts'][0]['text']
-             # Clean up potential markdown formatting
              text_content = text_content.replace('```json', '').replace('```', '')
              return json.loads(text_content), None
         else:
@@ -131,7 +117,6 @@ st.title("🇮🇹 Vista Vocale")
 if model_error:
     st.error(f"⚠️ Could not find models: {model_error}")
 else:
-    # This should now say "gemini-1.5-flash" (The Reliable One)
     st.caption(f"✨ Connected to: `{valid_model_name}`")
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
@@ -157,7 +142,11 @@ with t_gallery:
 st.markdown("---")
 
 if final_image_bytes:
-    st.image(final_image_bytes, use_container_width=True)
+    # --- LAYOUT CHANGE 1: SMALLER IMAGE ---
+    # We use columns to center the image and limit width
+    c1, c2, c3 = st.columns([1, 2, 1]) 
+    with c2:
+        st.image(final_image_bytes, use_container_width=True)
     
     if st.button("🇮🇹 Create Lesson", type="primary"):
         with st.spinner("Analyzing..."):
@@ -166,9 +155,10 @@ if final_image_bytes:
             if error:
                 st.error(error)
             elif lesson_data:
-                t1, t2, t3 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY"])
+                # --- LAYOUT CHANGE 2: 4TH TAB FOR TRANSLATIONS ---
+                t1, t2, t3, t4 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY", "🇺🇸 TRANSLATION"])
                 
-                # --- TAB 1: VOCABULARY ---
+                # --- TAB 1: VOCAB (Italian Only) ---
                 with t1:
                     vocab_list = lesson_data.get('vocabulary', [])
                     if isinstance(vocab_list, list):
@@ -183,7 +173,7 @@ if final_image_bytes:
                                     if ab: st.audio(ab, format='audio/mp3')
                                 st.divider()
                             
-                # --- TAB 2: CONVERSATION ---
+                # --- TAB 2: CHAT (Italian Only) ---
                 with t2:
                     chat_list = lesson_data.get('conversation', [])
                     if isinstance(chat_list, list):
@@ -197,13 +187,12 @@ if final_image_bytes:
                                 else:
                                     st.markdown(str(turn))
                                     italian = str(turn)
-                                    
                             with c2:
                                 ab = get_audio_bytes(italian)
                                 if ab: st.audio(ab, format='audio/mp3')
                             st.divider()
 
-                # --- TAB 3: STORY ---
+                # --- TAB 3: STORY (Italian Only) ---
                 with t3:
                     story_list = lesson_data.get('story', [])
                     if isinstance(story_list, list):
@@ -216,8 +205,33 @@ if final_image_bytes:
                                 else:
                                     text = str(chunk)
                                     st.markdown(f"📖 {text}")
-
                             with c2:
                                 ab = get_audio_bytes(text)
                                 if ab: st.audio(ab, format='audio/mp3')
                             st.divider()
+
+                # --- TAB 4: TRANSLATIONS (The Answer Key) ---
+                with t4:
+                    st.header("🇺🇸 English Translations")
+                    
+                    st.subheader("1. Vocabulary")
+                    if isinstance(vocab_list, list):
+                        for item in vocab_list:
+                             if isinstance(item, dict):
+                                 st.markdown(f"**{item.get('italian_word')}** = *{item.get('object_name')}*")
+                                 st.caption(f"Sent: {item.get('english_translation')}")
+                                 st.divider()
+
+                    st.subheader("2. Conversation")
+                    if isinstance(chat_list, list):
+                        for turn in chat_list:
+                             if isinstance(turn, dict):
+                                 st.markdown(f"**{turn.get('speaker')}**: {turn.get('english')}")
+
+                    st.markdown("---")
+                    st.subheader("3. Story")
+                    if isinstance(story_list, list):
+                        for chunk in story_list:
+                             if isinstance(chunk, dict):
+                                 st.markdown(f"_{chunk.get('english')}_")
+                                 st.markdown("")
