@@ -1,32 +1,66 @@
-import os
 import streamlit as st
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import requests
 from io import BytesIO
 import json
 from gtts import gTTS
-from duckduckgo_search import DDGS
-import warnings
 import time
 from PIL import Image
+import warnings
 
-# --- 1. SILENCE WARNINGS ---
+# --- 1. CONFIGURATION & SETUP ---
 warnings.filterwarnings("ignore")
+st.set_page_config(page_title="Vista Vocale", layout="wide")
 
-# --- CONFIGURATION ---
-# We use the standard, stable model name
-GEMINI_MODEL_NAME = "gemini-1.5-flash"
-
+# Get API Key
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
 except:
     st.error("❌ CRITICAL ERROR: API Key missing from Secrets!")
     st.stop()
 
-# Configure the "Old Reliable" Library
+# Configure Library
 genai.configure(api_key=API_KEY)
 
-# --- STYLING ---
+# --- 2. SELF-HEALING MODEL SELECTOR ---
+@st.cache_data
+def find_working_model():
+    """Asks Google which models are available and picks the best one."""
+    try:
+        # List all models
+        all_models = list(genai.list_models())
+        
+        # Priority list (We prefer Flash, then Pro, then anything else)
+        preferences = [
+            "gemini-1.5-flash",
+            "gemini-1.5-flash-001",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro",
+            "gemini-pro-vision"
+        ]
+        
+        # Check if any preferred model exists in the available list
+        for pref in preferences:
+            for m in all_models:
+                if pref in m.name:
+                    return m.name # Found a match!
+        
+        # If no match, just return the first one that supports vision
+        for m in all_models:
+            if 'vision' in m.supported_generation_methods:
+                return m.name
+                
+        return "models/gemini-1.5-flash" # Fallback guess
+    except Exception as e:
+        return "models/gemini-1.5-flash"
+
+# Find the model ONCE and save it
+valid_model_name = find_working_model()
+
+# --- 3. APP LOGIC ---
+
+# Styling
 st.markdown("""
     <style>
     button[data-baseweb="tab"] { font-size: 20px !important; padding: 12px !important; }
@@ -35,7 +69,6 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- SYSTEM PROMPT ---
 SYSTEM_INSTRUCTION = """
 You are an expert TPRS Italian teacher. Create a 3-part lesson.
 JSON Format:
@@ -45,13 +78,6 @@ JSON Format:
   "story": [{"italian": "", "english": ""}]
 }
 """
-
-st.set_page_config(page_title="Vista Vocale", layout="wide")
-
-# --- SIDEBAR ---
-with st.sidebar:
-    st.header("⚙️ Settings")
-    teacher_mode = st.checkbox("🎓 Teacher Mode", value=False)
 
 # --- FUNCTIONS ---
 def get_audio_bytes(text, lang='it'):
@@ -63,57 +89,46 @@ def get_audio_bytes(text, lang='it'):
         return fp
     except: return None
 
-# --- ANALYSIS FUNCTION (Using google-generativeai) ---
 @st.cache_data(show_spinner=False)
-def generate_lesson_from_bytes(image_bytes, mime_type):
-    # Load the model using the stable library
-    model = genai.GenerativeModel(GEMINI_MODEL_NAME, system_instruction=SYSTEM_INSTRUCTION)
+def generate_lesson_from_bytes(image_bytes):
+    # Use the model we found earlier
+    model = genai.GenerativeModel(valid_model_name, system_instruction=SYSTEM_INSTRUCTION)
     
-    # Convert bytes to a PIL Image (The old library loves PIL Images)
     try:
         image = Image.open(BytesIO(image_bytes))
     except:
-        return None, "Could not process image data."
+        return None, "Invalid image format."
 
-    # Retry logic
-    last_error = None
     for attempt in range(3):
         try:
-            # The generation call
             response = model.generate_content(
                 [image, "Create a TPRS lesson."],
                 generation_config={"response_mime_type": "application/json"}
             )
-            
-            # Parse JSON
             return json.loads(response.text), None
-            
         except Exception as e:
-            last_error = e
-            if "429" in str(e) or "quota" in str(e).lower():
+            if "429" in str(e):
                 time.sleep(2)
                 continue
+            return None, str(e)
             
-    return None, str(last_error)
+    return None, "Server busy (Timeout)."
 
 # --- MAIN LAYOUT ---
 st.title("🇮🇹 Vista Vocale")
+st.caption(f"✨ Connected to: {valid_model_name}") # DEBUG INFO
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
 
 final_image_bytes = None
-final_mime_type = "image/jpeg"
 start_analysis = False
 
-# TAB 1: UPLOAD
 with t_upload:
-    uploaded_file = st.file_uploader("Take a photo:", type=["jpg", "png", "jpeg", "webp", "heic"])
+    uploaded_file = st.file_uploader("Take a photo:", type=["jpg", "png", "jpeg", "webp"])
     if uploaded_file:
         final_image_bytes = uploaded_file.getvalue()
-        final_mime_type = uploaded_file.type
         start_analysis = True
 
-# TAB 2: GALLERY
 with t_gallery:
     IMAGE_GALLERY = {
         "Select...": None,
@@ -130,10 +145,9 @@ with t_gallery:
 
 st.markdown("---")
 
-# --- RESULT ---
 if start_analysis and final_image_bytes:
-    with st.spinner("Analyzing with Stable 1.5 Flash..."):
-        lesson_data, error_msg = generate_lesson_from_bytes(final_image_bytes, final_mime_type)
+    with st.spinner("Analyzing..."):
+        lesson_data, error_msg = generate_lesson_from_bytes(final_image_bytes)
 
         if error_msg:
             st.error(f"⚠️ ERROR: {error_msg}")
@@ -150,7 +164,6 @@ if start_analysis and final_image_bytes:
                         with c1:
                             st.markdown(f"**{item['italian_word']}**")
                             st.markdown(f"_{item['italian_sentence']}_")
-                            if not teacher_mode: st.caption(item['english_translation'])
                         with c2:
                             ab = get_audio_bytes(f"{item['italian_word']}... {item['italian_sentence']}")
                             if ab: st.audio(ab, format='audio/mp3')
@@ -162,7 +175,6 @@ if start_analysis and final_image_bytes:
                         c1, c2 = st.columns([3, 1])
                         with c1:
                             st.markdown(f"**{turn['speaker']}:** {turn['italian']}")
-                            if not teacher_mode: st.caption(f"({turn['english']})")
                         with c2:
                             ab = get_audio_bytes(turn['italian'])
                             if ab: st.audio(ab, format='audio/mp3')
@@ -174,7 +186,6 @@ if start_analysis and final_image_bytes:
                         c1, c2 = st.columns([3, 1])
                         with c1:
                             st.markdown(f"📖 **{chunk['italian']}**")
-                            if not teacher_mode: st.caption(chunk['english'])
                         with c2:
                             ab = get_audio_bytes(chunk['italian'])
                             if ab: st.audio(ab, format='audio/mp3')
