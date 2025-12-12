@@ -39,18 +39,16 @@ def get_best_model_name():
         
         # We look for specific trusted models in this order
         priority_list = [
+            "gemini-2.0-flash-exp", # The smart new one
             "gemini-1.5-flash",
             "gemini-1.5-flash-latest",
             "gemini-1.5-flash-001",
-            "gemini-1.5-pro",
-            "gemini-pro-vision"
         ]
         
         # 1. Try to find a match from our priority list
         for priority in priority_list:
             for m in models:
                 if priority in m['name']:
-                    # Return the full name (e.g., "models/gemini-1.5-flash-001")
                     return m['name'], None
 
         # 2. Fallback: Find ANY model that supports 'generateContent'
@@ -58,7 +56,7 @@ def get_best_model_name():
             if "generateContent" in m.get('supportedGenerationMethods', []):
                 return m['name'], None
                 
-        return "models/gemini-1.5-flash", None # Blind guess if all else fails
+        return "models/gemini-1.5-flash", None
         
     except Exception as e:
         return None, str(e)
@@ -68,15 +66,25 @@ valid_model_name, model_error = get_best_model_name()
 
 # --- 2. DIRECT API CALL ---
 def call_gemini_direct(image_bytes, model_name):
-    # Use the discovered model name directly
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
     
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
     
+    # We ask for a VERY specific structure to help the AI
+    prompt_text = """
+    You are an expert TPRS Italian teacher. Analyze the image and return a JSON object.
+    Strictly follow this structure:
+    {
+      "vocabulary": [{"italian_word": "word", "italian_sentence": "sentence", "english_translation": "trans", "object_name": "name"}],
+      "conversation": [{"speaker": "Name", "italian": "Italian text", "english": "English text"}],
+      "story": [{"italian": "Story sentence", "english": "English translation"}]
+    }
+    """
+    
     payload = {
         "contents": [{
             "parts": [
-                {"text": "You are an Italian teacher. Create a JSON lesson with: vocabulary (5 words), conversation, story."},
+                {"text": prompt_text},
                 {"inline_data": {
                     "mime_type": "image/jpeg",
                     "data": b64_image
@@ -94,8 +102,12 @@ def call_gemini_direct(image_bytes, model_name):
             return None, f"API Error ({response.status_code}): {response.text}"
             
         result = response.json()
-        text_content = result['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(text_content), None
+        # Safe extraction of text
+        if 'candidates' in result and result['candidates']:
+             text_content = result['candidates'][0]['content']['parts'][0]['text']
+             return json.loads(text_content), None
+        else:
+             return None, "AI returned no content."
         
     except Exception as e:
         return None, str(e)
@@ -115,7 +127,7 @@ st.title("🇮🇹 Vista Vocale")
 if model_error:
     st.error(f"⚠️ Could not find models: {model_error}")
 else:
-    st.caption(f"✨ Connected to: `{valid_model_name}`") # Shows exactly what model we found!
+    st.caption(f"✨ Connected to: `{valid_model_name}`")
 
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
 final_image_bytes = None
@@ -142,7 +154,7 @@ st.markdown("---")
 if final_image_bytes:
     st.image(final_image_bytes, use_container_width=True)
     
-    if st.button("🇮🇹 Create Lesson"):
+    if st.button("🇮🇹 Create Lesson", type="primary"):
         with st.spinner("Analyzing..."):
             lesson_data, error = call_gemini_direct(final_image_bytes, valid_model_name)
             
@@ -151,36 +163,60 @@ if final_image_bytes:
             elif lesson_data:
                 t1, t2, t3 = st.tabs(["📖 VOCAB", "🗣️ CHAT", "📜 STORY"])
                 
+                # --- TAB 1: VOCABULARY ---
                 with t1:
-                    if 'vocabulary' in lesson_data:
-                        for item in lesson_data.get('vocabulary', []):
-                            c1, c2 = st.columns([3, 1])
-                            with c1:
-                                st.markdown(f"**{item.get('italian_word')}**")
-                                st.markdown(f"_{item.get('italian_sentence')}_")
-                            with c2:
-                                ab = get_audio_bytes(f"{item.get('italian_word')}... {item.get('italian_sentence')}")
-                                if ab: st.audio(ab, format='audio/mp3')
-                            st.divider()
+                    vocab_list = lesson_data.get('vocabulary', [])
+                    if isinstance(vocab_list, list):
+                        for item in vocab_list:
+                            # Defensive check: Is it a dictionary?
+                            if isinstance(item, dict):
+                                c1, c2 = st.columns([3, 1])
+                                with c1:
+                                    st.markdown(f"**{item.get('italian_word', '')}**")
+                                    st.markdown(f"_{item.get('italian_sentence', '')}_")
+                                with c2:
+                                    ab = get_audio_bytes(f"{item.get('italian_word', '')}... {item.get('italian_sentence', '')}")
+                                    if ab: st.audio(ab, format='audio/mp3')
+                                st.divider()
                             
+                # --- TAB 2: CONVERSATION ---
                 with t2:
-                    if 'conversation' in lesson_data:
-                        for turn in lesson_data.get('conversation', []):
+                    chat_list = lesson_data.get('conversation', [])
+                    if isinstance(chat_list, list):
+                        for turn in chat_list:
                             c1, c2 = st.columns([3, 1])
                             with c1:
-                                st.markdown(f"**{turn.get('speaker')}**: {turn.get('italian')}")
+                                # Defensive check: Dictionary vs String
+                                if isinstance(turn, dict):
+                                    speaker = turn.get('speaker', 'Speaker')
+                                    italian = turn.get('italian', '')
+                                    st.markdown(f"**{speaker}**: {italian}")
+                                else:
+                                    # Fallback if AI sent just a string
+                                    st.markdown(str(turn))
+                                    italian = str(turn) # for audio
+                                    
                             with c2:
-                                ab = get_audio_bytes(turn.get('italian'))
+                                ab = get_audio_bytes(italian)
                                 if ab: st.audio(ab, format='audio/mp3')
                             st.divider()
 
+                # --- TAB 3: STORY ---
                 with t3:
-                    if 'story' in lesson_data:
-                        for chunk in lesson_data.get('story', []):
+                    story_list = lesson_data.get('story', [])
+                    if isinstance(story_list, list):
+                        for chunk in story_list:
                             c1, c2 = st.columns([3, 1])
                             with c1:
-                                st.markdown(f"📖 {chunk.get('italian')}")
+                                # Defensive check
+                                if isinstance(chunk, dict):
+                                    text = chunk.get('italian', '')
+                                    st.markdown(f"📖 {text}")
+                                else:
+                                    text = str(chunk)
+                                    st.markdown(f"📖 {text}")
+
                             with c2:
-                                ab = get_audio_bytes(chunk.get('italian'))
+                                ab = get_audio_bytes(text)
                                 if ab: st.audio(ab, format='audio/mp3')
                             st.divider()
