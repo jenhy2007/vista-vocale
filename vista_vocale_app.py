@@ -32,7 +32,7 @@ LANG_CONFIG = {
     "🇨🇳 Chinese": { "code": "zh-CN", "name": "Mandarin Chinese", "super7": "是 (shì), 有 (yǒu), 要 (yào), 去 (qù), 喜欢 (xǐhuān), 在 (zài), 能 (néng)" }
 }
 
-# --- 1. INTELLIGENT MODEL MANAGER ---
+# --- 1. INTELLIGENT MODEL MANAGER (RE-RANKED) ---
 @st.cache_data
 def get_prioritized_models():
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
@@ -50,12 +50,18 @@ def get_prioritized_models():
             if "embedding" in name.lower(): continue
             valid_models.append(name)
         
+        # --- NEW SORTING STRATEGY: QUALITY OVER SPEED ---
         def sort_key(name):
-            if "gemini-2.5-flash-lite" in name: return 0
-            if "gemini-2.5-flash" in name: return 1
-            if "gemini-3" in name: return 2
-            if "gemini-2.5" in name: return 3
-            return 99 
+            # 1. Gemini 3 (Best quality, likely available)
+            if "gemini-3" in name: return 0
+            # 2. Gemini 2.5 Flash (Full version, NOT Lite)
+            if "gemini-2.5-flash" in name and "lite" not in name: return 1
+            # 3. Gemini 2.5 (Standard)
+            if "gemini-2.5" in name and "lite" not in name: return 2
+            # 4. Lite models (Last resort)
+            if "lite" in name: return 99
+            return 50 
+            
         valid_models.sort(key=sort_key)
         return valid_models
     except:
@@ -70,6 +76,7 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
         b64_image = base64.b64encode(image_bytes).decode('utf-8')
         
+        # We force a simpler JSON structure to help even dumber models
         prompt_text = f"""
         You are an expert TPRS {lang_config['name']} teacher.
         Analyze the image and create a lesson strictly following these rules:
@@ -78,7 +85,13 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
         4. Keep level A1 (Beginner).
         CRITICAL: If CHINESE use Pinyin. If ITALIAN/FRENCH leave pronunciation empty.
-        Return JSON.
+        
+        Return STRICT JSON with these exact keys:
+        {{
+          "vocabulary": [{{"target_word": "...", "pronunciation": "...", "target_sentence": "...", "english_translation": "...", "object_name": "..."}}],
+          "conversation": [{{"speaker": "...", "target_text": "...", "pronunciation": "...", "english": "..."}}],
+          "story": [{{"target_text": "...", "pronunciation": "...", "english": "..."}}]
+        }}
         """
         
         payload = {
@@ -88,6 +101,8 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         
         try:
             response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
+            
+            # IF SUCCESS
             if response.status_code == 200:
                 result = response.json()
                 if 'candidates' in result and result['candidates']:
@@ -96,11 +111,16 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
                     time.sleep(1)
                     status_placeholder.empty()
                     try:
-                        parsed_json = json.loads(text_content.replace('```json', '').replace('```', ''))
+                        # Clean cleanup of markdown json tags
+                        clean_text = text_content.replace('```json', '').replace('```', '')
+                        parsed_json = json.loads(clean_text)
                         return parsed_json, None, model_name
                     except:
-                        return None, "AI returned text but it wasn't valid JSON.", model_name
+                        # If JSON parsing fails, treat it as a failure so we try the next model!
+                        status_placeholder.warning(f"⚠️ `{model_name}` returned bad data format. Skipping...")
+                        continue
 
+            # IF BUSY or ERROR
             if response.status_code in [429, 400, 503]:
                 status_placeholder.warning(f"⚠️ `{model_name}` failed. Switching engines...")
                 time.sleep(1)
@@ -113,15 +133,11 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
             
     return None, "All available models failed.", "All"
 
-# --- 3. HELPER: FLEXIBLE DATA READER ---
-# This looks for keys even if the AI misnames them (e.g. "Word" instead of "target_word")
+# --- 3. FLEXIBLE READER ---
 def get_any(d, keys, default=""):
     for k in keys:
-        if k in d and d[k]:
-            return d[k]
-        # Also try lowercase version
-        if k.lower() in d and d[k.lower()]:
-             return d[k.lower()]
+        if k in d and d[k]: return d[k]
+        if k.lower() in d and d[k.lower()]: return d[k.lower()]
     return default
 
 # --- 4. GALLERY DOWNLOADER ---
@@ -136,10 +152,8 @@ def load_gallery_image(url):
 
 # --- 5. HELPER: TEXT FILE ---
 def create_lesson_file(data, lang_name):
-    text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n==========================================\n\n"
-    # Note: We aren't using the flexible reader here for simplicity, but the download usually matches
-    text += "(Detailed content available in app tabs)"
-    return str(data) # Quick dump for safety
+    # Simplified text generator for download
+    return str(data)
 
 def get_audio_bytes(text, lang_code):
     try:
@@ -208,10 +222,9 @@ if final_image_bytes:
                 if isinstance(item, dict):
                     c1, c2 = st.columns([3, 1])
                     with c1:
-                        # Try finding the word using multiple possible key names
-                        word = get_any(item, ['target_word', 'word', 'term', 'vocabulary'])
-                        pron = get_any(item, ['pronunciation', 'pinyin', 'pron'])
-                        sent = get_any(item, ['target_sentence', 'sentence', 'example'])
+                        word = get_any(item, ['target_word', 'word'])
+                        pron = get_any(item, ['pronunciation', 'pinyin'])
+                        sent = get_any(item, ['target_sentence', 'sentence'])
                         
                         st.markdown(f"**{word}**")
                         if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
@@ -220,8 +233,6 @@ if final_image_bytes:
                         ab = get_audio_bytes(f"{word}... {sent}", lang['code'])
                         if ab: st.audio(ab, format='audio/mp3')
                     st.divider()
-                else:
-                    st.markdown(f"• {str(item)}")
 
         # --- TAB 2: CHAT ---
         with t2:
@@ -229,8 +240,8 @@ if final_image_bytes:
                 c1, c2 = st.columns([3, 1])
                 with c1:
                     if isinstance(turn, dict):
-                        speaker = get_any(turn, ['speaker', 'person', 'role'], 'Speaker')
-                        text = get_any(turn, ['target_text', 'text', 'message', 'sentence'])
+                        speaker = get_any(turn, ['speaker', 'role'], 'Speaker')
+                        text = get_any(turn, ['target_text', 'text'])
                         pron = get_any(turn, ['pronunciation', 'pinyin'])
                         
                         st.markdown(f"**{speaker}**: {text}")
@@ -250,7 +261,7 @@ if final_image_bytes:
                 c1, c2 = st.columns([3, 1])
                 with c1:
                     if isinstance(chunk, dict):
-                        text = get_any(chunk, ['target_text', 'text', 'sentence', 'story'])
+                        text = get_any(chunk, ['target_text', 'text'])
                         pron = get_any(chunk, ['pronunciation', 'pinyin'])
                         
                         st.markdown(f"📖 {text}")
@@ -270,9 +281,8 @@ if final_image_bytes:
             for item in data.get('vocabulary', []):
                 if isinstance(item, dict):
                     word = get_any(item, ['target_word', 'word'])
-                    obj = get_any(item, ['object_name', 'english_word', 'meaning'])
-                    trans = get_any(item, ['english_translation', 'translation', 'english'])
-                    
+                    obj = get_any(item, ['object_name', 'meaning'])
+                    trans = get_any(item, ['english_translation', 'translation'])
                     st.markdown(f"**{word}** = *{obj}*")
                     st.caption(f"Sent: {trans}")
                     st.divider()
@@ -280,10 +290,8 @@ if final_image_bytes:
         # --- TAB 5: DOWNLOAD ---
         with t5:
             st.header("💾 Download")
-            # Quick dump
             st.json(data)
-
-        # --- TAB 6: DEBUG DATA ---
+            
+        # --- TAB 6: DEBUG ---
         with t6:
-            st.info("If the tabs are empty, look at this raw data to see what keys the AI used!")
             st.json(data)
