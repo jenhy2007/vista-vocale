@@ -15,13 +15,44 @@ except:
     st.error("❌ API Key missing. Please check Secrets.")
     st.stop()
 
-# --- STYLING ---
+# --- STYLING (BIG TEXT EDITION) ---
 st.markdown("""
     <style>
-    button[data-baseweb="tab"] { font-size: 16px !important; padding: 8px 12px !important; flex: 1 1 auto; }
-    h1 { font-size: 2.2rem !important; }
+    /* Increase base font size for the whole app */
+    html, body, [class*="css"] {
+        font-size: 20px !important; 
+    }
+    
+    /* Make the tabs bigger */
+    button[data-baseweb="tab"] { 
+        font-size: 22px !important; 
+        padding: 10px 20px !important; 
+        flex: 1 1 auto; 
+    }
+    
+    /* Make headers pop */
+    h1 { font-size: 3rem !important; color: #FF4B4B; }
+    h2 { font-size: 2.2rem !important; }
+    h3 { font-size: 1.8rem !important; }
+    
+    /* Center select boxes */
     div[data-baseweb="select"] { text-align: center; }
-    .pinyin { color: #888; font-size: 0.9rem; font-style: italic; margin-bottom: 5px; }
+    
+    /* Pinyin styling - distinct color */
+    .pinyin { 
+        color: #555; 
+        font-size: 1.1rem; 
+        font-style: italic; 
+        margin-bottom: 5px; 
+        font-family: "Courier New", monospace;
+    }
+    
+    /* Target word emphasis */
+    .vocab-word {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #1E88E5;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -32,7 +63,7 @@ LANG_CONFIG = {
     "🇨🇳 Chinese": { "code": "zh-CN", "name": "Mandarin Chinese", "super7": "是 (shì), 有 (yǒu), 要 (yào), 去 (qù), 喜欢 (xǐhuān), 在 (zài), 能 (néng)" }
 }
 
-# --- 1. INTELLIGENT MODEL MANAGER (RE-RANKED) ---
+# --- 1. INTELLIGENT MODEL MANAGER ---
 @st.cache_data
 def get_prioritized_models():
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
@@ -50,15 +81,11 @@ def get_prioritized_models():
             if "embedding" in name.lower(): continue
             valid_models.append(name)
         
-        # --- NEW SORTING STRATEGY: QUALITY OVER SPEED ---
+        # Sort: Gemini 3 -> 2.5 Full -> 2.5 Lite
         def sort_key(name):
-            # 1. Gemini 3 (Best quality, likely available)
             if "gemini-3" in name: return 0
-            # 2. Gemini 2.5 Flash (Full version, NOT Lite)
             if "gemini-2.5-flash" in name and "lite" not in name: return 1
-            # 3. Gemini 2.5 (Standard)
             if "gemini-2.5" in name and "lite" not in name: return 2
-            # 4. Lite models (Last resort)
             if "lite" in name: return 99
             return 50 
             
@@ -76,7 +103,7 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
         b64_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        # We force a simpler JSON structure to help even dumber models
+        # UPDATED PROMPT: Explicitly asking for sentence pronunciation
         prompt_text = f"""
         You are an expert TPRS {lang_config['name']} teacher.
         Analyze the image and create a lesson strictly following these rules:
@@ -84,11 +111,23 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: {lang_config['super7']}.
         3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
         4. Keep level A1 (Beginner).
-        CRITICAL: If CHINESE use Pinyin. If ITALIAN/FRENCH leave pronunciation empty.
+        
+        CRITICAL FORMATTING:
+        - If CHINESE: You MUST provide Pinyin for the 'target_word' AND the 'target_sentence'.
+        - If ITALIAN/FRENCH: Leave pronunciation empty.
         
         Return STRICT JSON with these exact keys:
         {{
-          "vocabulary": [{{"target_word": "...", "pronunciation": "...", "target_sentence": "...", "english_translation": "...", "object_name": "..."}}],
+          "vocabulary": [
+            {{
+                "target_word": "...", 
+                "pronunciation": "...", 
+                "target_sentence": "...", 
+                "sentence_pronunciation": "...", 
+                "english_translation": "...", 
+                "object_name": "..."
+            }}
+          ],
           "conversation": [{{"speaker": "...", "target_text": "...", "pronunciation": "...", "english": "..."}}],
           "story": [{{"target_text": "...", "pronunciation": "...", "english": "..."}}]
         }}
@@ -102,7 +141,6 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         try:
             response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
             
-            # IF SUCCESS
             if response.status_code == 200:
                 result = response.json()
                 if 'candidates' in result and result['candidates']:
@@ -111,16 +149,13 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
                     time.sleep(1)
                     status_placeholder.empty()
                     try:
-                        # Clean cleanup of markdown json tags
                         clean_text = text_content.replace('```json', '').replace('```', '')
                         parsed_json = json.loads(clean_text)
                         return parsed_json, None, model_name
                     except:
-                        # If JSON parsing fails, treat it as a failure so we try the next model!
                         status_placeholder.warning(f"⚠️ `{model_name}` returned bad data format. Skipping...")
                         continue
 
-            # IF BUSY or ERROR
             if response.status_code in [429, 400, 503]:
                 status_placeholder.warning(f"⚠️ `{model_name}` failed. Switching engines...")
                 time.sleep(1)
@@ -152,8 +187,37 @@ def load_gallery_image(url):
 
 # --- 5. HELPER: TEXT FILE ---
 def create_lesson_file(data, lang_name):
-    # Simplified text generator for download
-    return str(data)
+    # Create a nice readable text format
+    text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n==========================================\n\n"
+    
+    text += "1. VOCABULARY\n-------------\n"
+    for item in data.get('vocabulary', []):
+        if isinstance(item, dict):
+            word = get_any(item, ['target_word', 'word'])
+            pron = get_any(item, ['pronunciation', 'pinyin'])
+            sent = get_any(item, ['target_sentence', 'sentence'])
+            sent_pron = get_any(item, ['sentence_pronunciation', 'sentence_pinyin'])
+            trans = get_any(item, ['english_translation', 'translation'])
+            
+            text += f"* {word}"
+            if pron: text += f" [{pron}]"
+            text += f"\n  SENTENCE: {sent}\n"
+            if sent_pron: text += f"  PINYIN: {sent_pron}\n"
+            text += f"  MEANING: {trans}\n\n"
+
+    text += "2. CONVERSATION\n---------------\n"
+    for turn in data.get('conversation', []):
+        if isinstance(turn, dict):
+            speaker = get_any(turn, ['speaker', 'role'])
+            txt = get_any(turn, ['target_text', 'text'])
+            text += f"{speaker}: {txt}\n"
+            
+    text += "\n3. STORY\n--------\n"
+    for chunk in data.get('story', []):
+        if isinstance(chunk, dict):
+            text += get_any(chunk, ['target_text', 'text']) + "\n"
+            
+    return text
 
 def get_audio_bytes(text, lang_code):
     try:
@@ -214,7 +278,7 @@ if final_image_bytes:
         lang = st.session_state['current_lang']
         st.caption(f"✨ Generated using: `{st.session_state.get('used_model', 'Unknown')}`")
         st.markdown("---")
-        t1, t2, t3, t4, t5, t6 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save", "🔍 Debug"])
+        t1, t2, t3, t4, t5 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save"])
         
         # --- TAB 1: VOCAB ---
         with t1:
@@ -225,10 +289,16 @@ if final_image_bytes:
                         word = get_any(item, ['target_word', 'word'])
                         pron = get_any(item, ['pronunciation', 'pinyin'])
                         sent = get_any(item, ['target_sentence', 'sentence'])
+                        # NEW: Try to get sentence pinyin
+                        sent_pron = get_any(item, ['sentence_pronunciation', 'sentence_pinyin'])
                         
-                        st.markdown(f"**{word}**")
+                        st.markdown(f"<div class='vocab-word'>{word}</div>", unsafe_allow_html=True)
                         if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
+                        
                         st.markdown(f"_{sent}_")
+                        # NEW: Display sentence pinyin if available
+                        if sent_pron: st.markdown(f"<div class='pinyin' style='font-size: 0.9rem;'>{sent_pron}</div>", unsafe_allow_html=True)
+                        
                     with c2:
                         ab = get_audio_bytes(f"{word}... {sent}", lang['code'])
                         if ab: st.audio(ab, format='audio/mp3')
@@ -289,9 +359,7 @@ if final_image_bytes:
 
         # --- TAB 5: DOWNLOAD ---
         with t5:
-            st.header("💾 Download")
-            st.json(data)
-            
-        # --- TAB 6: DEBUG ---
-        with t6:
-            st.json(data)
+            st.header("💾 Download Notes")
+            lesson_text = create_lesson_file(data, lang['name'])
+            # Explicitly label as .txt to avoid confusion
+            st.download_button(label=f"📥 Download Lesson (.txt)", data=lesson_text, file_name=f"{lang['name']}_Lesson.txt", mime="text/plain")
