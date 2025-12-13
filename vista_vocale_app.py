@@ -17,57 +17,53 @@ except:
 # --- STYLING ---
 st.markdown("""
     <style>
-    /* Compact Tabs for Mobile */
-    button[data-baseweb="tab"] { 
-        font-size: 16px !important; 
-        padding: 8px 12px !important; 
-        min-width: 0px !important;
-        flex: 1 1 auto;
-    }
+    button[data-baseweb="tab"] { font-size: 16px !important; padding: 8px 12px !important; flex: 1 1 auto; }
     h1 { font-size: 2.2rem !important; }
-    p, li { font-size: 1.1rem !important; }
-    [data-testid="stDownloadButton"] > button { width: 100%; }
-    /* Center the selectbox text */
     div[data-baseweb="select"] { text-align: center; }
-    /* Pinyin Styling */
     .pinyin { color: #888; font-size: 0.9rem; font-style: italic; margin-bottom: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
 # --- LANGUAGE SETTINGS ---
 LANG_CONFIG = {
-    "🇮🇹 Italian": {
-        "code": "it",
-        "name": "Italian",
-        "super7": "essere, avere, volere, andare, piacere, c'è, potere"
-    },
-    "🇫🇷 French": {
-        "code": "fr",
-        "name": "French",
-        "super7": "être, avoir, vouloir, aller, aimer, il y a, pouvoir"
-    },
-    "🇨🇳 Chinese": {
-        "code": "zh-CN",
-        "name": "Mandarin Chinese",
-        "super7": "是 (shì), 有 (yǒu), 要 (yào), 去 (qù), 喜欢 (xǐhuān), 在 (zài), 能 (néng)"
-    }
+    "🇮🇹 Italian": { "code": "it", "name": "Italian", "super7": "essere, avere, volere, andare, piacere, c'è, potere" },
+    "🇫🇷 French": { "code": "fr", "name": "French", "super7": "être, avoir, vouloir, aller, aimer, il y a, pouvoir" },
+    "🇨🇳 Chinese": { "code": "zh-CN", "name": "Mandarin Chinese", "super7": "是 (shì), 有 (yǒu), 要 (yào), 去 (qù), 喜欢 (xǐhuān), 在 (zài), 能 (néng)" }
 }
 
-# --- 1. MODEL DISCOVERY (UPDATED) ---
+# --- 1. THE TRUTH SERUM (List EXACTLY what you have) ---
 @st.cache_data
-def get_available_models():
+def get_my_models():
     url = f"https://generativelanguage.googleapis.com/v1beta/models?key={API_KEY}"
     try:
         response = requests.get(url)
         if response.status_code != 200:
             return []
         data = response.json()
-        # Filter for models that support generating content
-        return [m['name'] for m in data.get('models', []) if "generateContent" in m.get('supportedGenerationMethods', [])]
+        # Filter for models that can generate content
+        valid_models = [
+            m['name'] for m in data.get('models', []) 
+            if "generateContent" in m.get('supportedGenerationMethods', [])
+        ]
+        return valid_models
     except:
         return []
 
-# --- 2. GALLERY DOWNLOADER ---
+# --- 2. SIDEBAR SELECTOR ---
+with st.sidebar:
+    st.header("🔧 Engine Room")
+    my_models = get_my_models()
+    
+    if not my_models:
+        st.error("⚠️ No models found! Your API Key might be invalid or has no access.")
+        active_model = "models/gemini-1.5-flash" # Fallback hope
+    else:
+        st.success(f"Found {len(my_models)} available engines.")
+        # Default to the first one, but let user pick
+        active_model = st.selectbox("Select Model:", my_models, index=0)
+        st.caption(f"Using: `{active_model}`")
+
+# --- 3. GALLERY DOWNLOADER ---
 @st.cache_data(show_spinner=False)
 def load_gallery_image(url):
     try:
@@ -75,63 +71,36 @@ def load_gallery_image(url):
         response = requests.get(url, headers=headers, timeout=5)
         response.raise_for_status()
         return response.content
-    except Exception as e:
-        return None
+    except Exception as e: return None
 
-# --- 3. HELPER: TEXT FILE GENERATOR ---
+# --- 4. HELPER: TEXT FILE ---
 def create_lesson_file(data, lang_name):
-    text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n"
-    text += "==========================================\n\n"
-    
-    text += "1. VOCABULARY\n"
-    text += "-------------\n"
+    text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n==========================================\n\n"
+    text += "1. VOCABULARY\n-------------\n"
     for item in data.get('vocabulary', []):
         if isinstance(item, dict):
             word = item.get('target_word', '')
             pron = item.get('pronunciation', '')
-            obj = item.get('object_name', '')
-            sent = item.get('target_sentence', '')
-            trans = item.get('english_translation', '')
-            
-            text += f"* {word} ({obj})\n"
+            text += f"* {word} ({item.get('object_name', '')})\n"
             if pron: text += f"  [{pron}]\n"
-            text += f"  - {sent}\n"
-            text += f"  - {trans}\n\n"
+            text += f"  - {item.get('target_sentence', '')}\n  - {item.get('english_translation', '')}\n\n"
 
-    text += "2. CONVERSATION\n"
-    text += "---------------\n"
+    text += "2. CONVERSATION\n---------------\n"
     for turn in data.get('conversation', []):
         if isinstance(turn, dict):
-            speaker = turn.get('speaker', '')
-            target = turn.get('target_text', '')
-            pron = turn.get('pronunciation', '')
-            eng = turn.get('english', '')
-            
-            text += f"{speaker}: {target}\n"
-            if pron: text += f"      [{pron}]\n"
-            text += f"      ({eng})\n"
-    text += "\n"
-
-    text += "3. STORY\n"
-    text += "--------\n"
+            text += f"{turn.get('speaker')}: {turn.get('target_text')}\n"
+            if turn.get('pronunciation'): text += f"      [{turn.get('pronunciation')}]\n"
+            text += f"      ({turn.get('english')})\n"
+    
+    text += "\n3. STORY\n--------\n"
     for chunk in data.get('story', []):
         if isinstance(chunk, dict):
-            target = chunk.get('target_text', '')
-            pron = chunk.get('pronunciation', '')
-            eng = chunk.get('english', '')
-            
-            text += f"{target}\n"
-            if pron: text += f"[{pron}]\n"
-            
-            if eng:
-                text += f"({eng})\n\n"
-            else:
-                text += "\n"
-    
-    text += "\n\n(Generated by Vista Vocale)"
+            text += f"{chunk.get('target_text')}\n"
+            if chunk.get('pronunciation'): text += f"[{chunk.get('pronunciation')}]\n"
+            if chunk.get('english'): text += f"({chunk.get('english')})\n\n"
     return text
 
-# --- 4. DIRECT API CALL ---
+# --- 5. DIRECT API CALL ---
 def call_gemini_direct(image_bytes, model_name, lang_config):
     url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
     b64_image = base64.b64encode(image_bytes).decode('utf-8')
@@ -139,70 +108,42 @@ def call_gemini_direct(image_bytes, model_name, lang_config):
     prompt_text = f"""
     You are an expert TPRS {lang_config['name']} teacher.
     Analyze the image and create a lesson strictly following these rules:
-    
     1. Select 5 High-Frequency Vocabulary words visible in the image.
     2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: {lang_config['super7']}.
     3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
     4. Keep level A1 (Beginner).
 
-    CRITICAL INSTRUCTION:
-    If the language is CHINESE (Mandarin), you MUST fill the "pronunciation" field with Pinyin (with tone marks).
-    If the language is Italian or French, leave the "pronunciation" field empty string "".
+    CRITICAL:
+    If CHINESE: fill "pronunciation" with Pinyin.
+    If ITALIAN/FRENCH: leave "pronunciation" empty ("").
     
-    Return JSON structure:
+    Return JSON:
     {{
-      "vocabulary": [{{
-          "target_word": "word", 
-          "pronunciation": "pinyin OR empty", 
-          "target_sentence": "sentence", 
-          "english_translation": "eng trans", 
-          "object_name": "eng object name"
-      }}],
-      "conversation": [{{
-          "speaker": "Name", 
-          "target_text": "text", 
-          "pronunciation": "pinyin OR empty",
-          "english": "eng trans"
-      }}],
-      "story": [{{
-          "target_text": "sentence", 
-          "pronunciation": "pinyin OR empty",
-          "english": "eng trans"
-      }}]
+      "vocabulary": [{{"target_word": "...", "pronunciation": "...", "target_sentence": "...", "english_translation": "...", "object_name": "..."}}],
+      "conversation": [{{"speaker": "...", "target_text": "...", "pronunciation": "...", "english": "..."}}],
+      "story": [{{"target_text": "...", "pronunciation": "...", "english": "..."}}]
     }}
     """
     
     payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt_text},
-                {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}
-            ]
-        }],
+        "contents": [{"parts": [{"text": prompt_text}, {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}]}],
         "generation_config": {"response_mime_type": "application/json"}
     }
     
     try:
         response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
-        if response.status_code != 200:
-            return None, f"API Error ({response.status_code}): {response.text}"
-            
+        if response.status_code != 200: return None, f"API Error ({response.status_code}): {response.text}"
         result = response.json()
         if 'candidates' in result and result['candidates']:
              text_content = result['candidates'][0]['content']['parts'][0]['text']
-             text_content = text_content.replace('```json', '').replace('```', '')
-             return json.loads(text_content), None
-        else:
-             return None, "AI returned no content."
-        
-    except Exception as e:
-        return None, str(e)
+             return json.loads(text_content.replace('```json', '').replace('```', '')), None
+        else: return None, "AI returned no content."
+    except Exception as e: return None, str(e)
 
 def get_audio_bytes(text, lang_code):
     try:
-        tts = gTTS(text=text, lang=lang_code)
         fp = BytesIO()
-        tts.write_to_fp(fp)
+        gTTS(text=text, lang=lang_code).write_to_fp(fp)
         fp.seek(0)
         return fp
     except: return None
@@ -210,31 +151,12 @@ def get_audio_bytes(text, lang_code):
 # --- MAIN APP LAYOUT ---
 st.title("🌍 Vista Vocale")
 
-# --- DEBUG / SETTINGS SECTION ---
-# This helps us fix the "Busy" error by switching models
-with st.expander("⚙️ Settings & Debug (Click if stuck)"):
-    available_models = get_available_models()
-    if not available_models:
-        st.error("Could not list models. Check API Key.")
-        selected_model = "models/gemini-1.5-flash" # Fallback
-    else:
-        # Try to find flash 1.5 as default
-        default_ix = 0
-        for i, m in enumerate(available_models):
-            if "gemini-1.5-flash" in m and "001" not in m: # Prefer standard flash
-                default_ix = i
-                break
-        
-        selected_model = st.selectbox("Select AI Model:", available_models, index=default_ix)
-        st.caption("Tip: If '2.5' is busy, try '1.5-flash'.")
-
 t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
 final_image_bytes = None
 
 with t_upload:
     uploaded_file = st.file_uploader("Take a photo:", type=["jpg", "png", "jpeg", "webp"])
-    if uploaded_file:
-        final_image_bytes = uploaded_file.getvalue()
+    if uploaded_file: final_image_bytes = uploaded_file.getvalue()
 
 with t_gallery:
     GALLERY = {
@@ -247,162 +169,81 @@ with t_gallery:
     choice = st.selectbox("Choose scene:", list(GALLERY.keys()))
     if choice and GALLERY[choice]:
         loaded_bytes = load_gallery_image(GALLERY[choice])
-        if loaded_bytes:
-            final_image_bytes = loaded_bytes
-        else:
-            st.error("⚠️ Could not download image.")
+        if loaded_bytes: final_image_bytes = loaded_bytes
 
 st.markdown("---")
 
 if final_image_bytes:
-    # --- CENTER LAYOUT ---
     c1, c2, c3 = st.columns([1, 2, 1]) 
     with c2:
         st.image(final_image_bytes, use_container_width=True)
-        
-        # --- LANGUAGE SELECTOR ---
-        selected_lang_key = st.selectbox(
-            "Select Target Language:", 
-            list(LANG_CONFIG.keys()),
-            index=0
-        )
+        selected_lang_key = st.selectbox("Select Target Language:", list(LANG_CONFIG.keys()), index=0)
         current_lang = LANG_CONFIG[selected_lang_key]
         
-        # --- BUTTON ---
         if st.button(f"Create {current_lang['name']} Lesson", type="primary", use_container_width=True):
-            
             with st.spinner("Analyzing..."):
-                lesson_data, error = call_gemini_direct(final_image_bytes, selected_model, current_lang)
-                
-                # --- NEW ERROR HANDLING ---
+                lesson_data, error = call_gemini_direct(final_image_bytes, active_model, current_lang)
                 if error:
-                    # Show the friendly message primarily
-                    if "429" in str(error) or "Quota" in str(error) or "RESOURCE_EXHAUSTED" in str(error):
-                        st.warning("⚠️ The system is busy (Daily Limit reached for this model).")
-                        st.info("Try switching the model in '⚙️ Settings' below!")
-                    else:
-                        st.error("An error occurred.")
-                    
-                    # Show the RAW error in an expander so you can copy-paste it to me
-                    with st.expander("Show Technical Error Details"):
-                        st.code(error)
-                
+                    st.error(error) 
+                    with st.expander("Raw Error"): st.code(error)
                 elif lesson_data:
-                    # Save results
                     st.session_state['lesson_data'] = lesson_data
                     st.session_state['current_lang'] = current_lang
 
-    # --- DISPLAY RESULTS ---
     if 'lesson_data' in st.session_state:
         data = st.session_state['lesson_data']
         lang = st.session_state['current_lang']
-        
         st.markdown("---")
-        
-        # --- COMPACT TABS ---
         t1, t2, t3, t4, t5 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save"])
         
-        # --- TAB 1: VOCAB ---
         with t1:
-            vocab_list = data.get('vocabulary', [])
-            if isinstance(vocab_list, list):
-                for item in vocab_list:
-                    if isinstance(item, dict):
-                        c1, c2 = st.columns([3, 1])
-                        with c1:
-                            st.markdown(f"**{item.get('target_word', '')}**")
-                            # --- PINYIN DISPLAY ---
-                            if item.get('pronunciation'):
-                                st.markdown(f"<div class='pinyin'>{item.get('pronunciation')}</div>", unsafe_allow_html=True)
-                            
-                            st.markdown(f"_{item.get('target_sentence', '')}_")
-                        with c2:
-                            ab = get_audio_bytes(f"{item.get('target_word', '')}... {item.get('target_sentence', '')}", lang['code'])
-                            if ab: st.audio(ab, format='audio/mp3')
-                        st.divider()
-                    
-        # --- TAB 2: CHAT ---
+            for item in data.get('vocabulary', []):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.markdown(f"**{item.get('target_word', '')}**")
+                    if item.get('pronunciation'): st.markdown(f"<div class='pinyin'>{item.get('pronunciation')}</div>", unsafe_allow_html=True)
+                    st.markdown(f"_{item.get('target_sentence', '')}_")
+                with c2:
+                    ab = get_audio_bytes(f"{item.get('target_word', '')}... {item.get('target_sentence', '')}", lang['code'])
+                    if ab: st.audio(ab, format='audio/mp3')
+                st.divider()
+
         with t2:
-            chat_list = data.get('conversation', [])
-            if isinstance(chat_list, list):
-                for turn in chat_list:
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        if isinstance(turn, dict):
-                            speaker = turn.get('speaker', 'Speaker')
-                            text = turn.get('target_text', '')
-                            pron = turn.get('pronunciation', '')
-                            
-                            st.markdown(f"**{speaker}**: {text}")
-                            # --- PINYIN DISPLAY ---
-                            if pron:
-                                st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
-                        else:
-                            st.markdown(str(turn))
-                            text = str(turn)
-                    with c2:
-                        ab = get_audio_bytes(text, lang['code'])
-                        if ab: st.audio(ab, format='audio/mp3')
-                    st.divider()
+            for turn in data.get('conversation', []):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.markdown(f"**{turn.get('speaker')}**: {turn.get('target_text')}")
+                    if turn.get('pronunciation'): st.markdown(f"<div class='pinyin'>{turn.get('pronunciation')}</div>", unsafe_allow_html=True)
+                with c2:
+                    ab = get_audio_bytes(turn.get('target_text'), lang['code'])
+                    if ab: st.audio(ab, format='audio/mp3')
+                st.divider()
 
-        # --- TAB 3: STORY ---
         with t3:
-            story_list = data.get('story', [])
-            if isinstance(story_list, list):
-                for chunk in story_list:
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        if isinstance(chunk, dict):
-                            text = chunk.get('target_text', '')
-                            pron = chunk.get('pronunciation', '')
-                            
-                            st.markdown(f"📖 {text}")
-                            # --- PINYIN DISPLAY ---
-                            if pron:
-                                st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
-                        else:
-                            text = str(chunk)
-                            st.markdown(f"📖 {text}")
-                    with c2:
-                        ab = get_audio_bytes(text, lang['code'])
-                        if ab: st.audio(ab, format='audio/mp3')
-                    st.divider()
+            for chunk in data.get('story', []):
+                c1, c2 = st.columns([3, 1])
+                with c1:
+                    st.markdown(f"📖 {chunk.get('target_text')}")
+                    if chunk.get('pronunciation'): st.markdown(f"<div class='pinyin'>{chunk.get('pronunciation')}</div>", unsafe_allow_html=True)
+                with c2:
+                    ab = get_audio_bytes(chunk.get('target_text'), lang['code'])
+                    if ab: st.audio(ab, format='audio/mp3')
+                st.divider()
 
-        # --- TAB 4: TRANSLATIONS ---
         with t4:
             st.header("🇺🇸 Answer Key")
-            st.subheader("1. Vocabulary")
-            if isinstance(vocab_list, list):
-                for item in vocab_list:
-                        if isinstance(item, dict):
-                            st.markdown(f"**{item.get('target_word')}** = *{item.get('object_name')}*")
-                            st.caption(f"Sent: {item.get('english_translation')}")
-                            st.divider()
+            for item in data.get('vocabulary', []):
+                st.markdown(f"**{item.get('target_word')}** = *{item.get('object_name')}*")
+                st.caption(f"Sent: {item.get('english_translation')}")
+                st.divider()
+            st.subheader("Conversation")
+            for turn in data.get('conversation', []):
+                st.markdown(f"**{turn.get('speaker')}**: {turn.get('english')}")
+            st.subheader("Story")
+            for chunk in data.get('story', []):
+                st.markdown(f"_{chunk.get('english')}_")
 
-            st.subheader("2. Conversation")
-            if isinstance(chat_list, list):
-                for turn in chat_list:
-                        if isinstance(turn, dict):
-                            st.markdown(f"**{turn.get('speaker')}**: {turn.get('english')}")
-
-            st.markdown("---")
-            st.subheader("3. Story")
-            if isinstance(story_list, list):
-                for chunk in story_list:
-                        if isinstance(chunk, dict):
-                            st.markdown(f"_{chunk.get('english')}_")
-                            st.markdown("")
-
-        # --- TAB 5: PRINT / SAVE ---
         with t5:
             st.header("💾 Download")
             lesson_text = create_lesson_file(data, lang['name'])
-            
-            st.download_button(
-                label=f"📥 Download (.txt)",
-                data=lesson_text,
-                file_name=f"{lang['name']}_Lesson.txt",
-                mime="text/plain"
-            )
-            st.markdown("---")
-            st.text(lesson_text)
+            st.download_button(label=f"📥 Download (.txt)", data=lesson_text, file_name=f"{lang['name']}_Lesson.txt", mime="text/plain")
