@@ -18,41 +18,12 @@ except:
 # --- STYLING (BIG TEXT EDITION) ---
 st.markdown("""
     <style>
-    /* Increase base font size for the whole app */
-    html, body, [class*="css"] {
-        font-size: 20px !important; 
-    }
-    
-    /* Make the tabs bigger */
-    button[data-baseweb="tab"] { 
-        font-size: 22px !important; 
-        padding: 10px 20px !important; 
-        flex: 1 1 auto; 
-    }
-    
-    /* Make headers pop */
+    html, body, [class*="css"] { font-size: 20px !important; }
+    button[data-baseweb="tab"] { font-size: 22px !important; padding: 10px 20px !important; flex: 1 1 auto; }
     h1 { font-size: 3rem !important; color: #FF4B4B; }
-    h2 { font-size: 2.2rem !important; }
-    h3 { font-size: 1.8rem !important; }
-    
-    /* Center select boxes */
     div[data-baseweb="select"] { text-align: center; }
-    
-    /* Pinyin styling - distinct color */
-    .pinyin { 
-        color: #555; 
-        font-size: 1.1rem; 
-        font-style: italic; 
-        margin-bottom: 5px; 
-        font-family: "Courier New", monospace;
-    }
-    
-    /* Target word emphasis */
-    .vocab-word {
-        font-size: 1.5rem;
-        font-weight: bold;
-        color: #1E88E5;
-    }
+    .pinyin { color: #555; font-size: 1.1rem; font-style: italic; margin-bottom: 5px; font-family: "Courier New", monospace; }
+    .vocab-word { font-size: 1.5rem; font-weight: bold; color: #1E88E5; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -71,28 +42,22 @@ def get_prioritized_models():
         response = requests.get(url)
         if response.status_code != 200: return []
         data = response.json()
-        
         valid_models = []
         for m in data.get('models', []):
             name = m['name']
-            methods = m.get('supportedGenerationMethods', [])
-            if "generateContent" not in methods: continue
-            if "tts" in name.lower(): continue
-            if "embedding" in name.lower(): continue
+            if "generateContent" not in m.get('supportedGenerationMethods', []): continue
+            if "tts" in name.lower() or "embedding" in name.lower(): continue
             valid_models.append(name)
         
-        # Sort: Gemini 3 -> 2.5 Full -> 2.5 Lite
         def sort_key(name):
             if "gemini-3" in name: return 0
             if "gemini-2.5-flash" in name and "lite" not in name: return 1
             if "gemini-2.5" in name and "lite" not in name: return 2
             if "lite" in name: return 99
             return 50 
-            
         valid_models.sort(key=sort_key)
         return valid_models
-    except:
-        return []
+    except: return []
 
 # --- 2. THE AUTO-PILOT ENGINE ---
 def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
@@ -103,7 +68,6 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
         b64_image = base64.b64encode(image_bytes).decode('utf-8')
         
-        # UPDATED PROMPT: Explicitly asking for sentence pronunciation
         prompt_text = f"""
         You are an expert TPRS {lang_config['name']} teacher.
         Analyze the image and create a lesson strictly following these rules:
@@ -140,7 +104,6 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
         
         try:
             response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
-            
             if response.status_code == 200:
                 result = response.json()
                 if 'candidates' in result and result['candidates']:
@@ -150,8 +113,7 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
                     status_placeholder.empty()
                     try:
                         clean_text = text_content.replace('```json', '').replace('```', '')
-                        parsed_json = json.loads(clean_text)
-                        return parsed_json, None, model_name
+                        return json.loads(clean_text), None, model_name
                     except:
                         status_placeholder.warning(f"⚠️ `{model_name}` returned bad data format. Skipping...")
                         continue
@@ -160,22 +122,17 @@ def generate_lesson_with_fallback(image_bytes, lang_config, models_list):
                 status_placeholder.warning(f"⚠️ `{model_name}` failed. Switching engines...")
                 time.sleep(1)
                 continue
-            
             return None, f"Error ({response.status_code}): {response.text}", model_name
-            
-        except Exception as e:
-            return None, str(e), model_name
-            
+        except Exception as e: return None, str(e), model_name
     return None, "All available models failed.", "All"
 
-# --- 3. FLEXIBLE READER ---
+# --- 3. HELPER FUNCTIONS ---
 def get_any(d, keys, default=""):
     for k in keys:
         if k in d and d[k]: return d[k]
         if k.lower() in d and d[k.lower()]: return d[k.lower()]
     return default
 
-# --- 4. GALLERY DOWNLOADER ---
 @st.cache_data(show_spinner=False)
 def load_gallery_image(url):
     try:
@@ -183,13 +140,10 @@ def load_gallery_image(url):
         response = requests.get(url, headers=headers, timeout=5)
         response.raise_for_status()
         return response.content
-    except Exception as e: return None
+    except: return None
 
-# --- 5. HELPER: TEXT FILE ---
 def create_lesson_file(data, lang_name):
-    # Create a nice readable text format
     text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n==========================================\n\n"
-    
     text += "1. VOCABULARY\n-------------\n"
     for item in data.get('vocabulary', []):
         if isinstance(item, dict):
@@ -198,7 +152,6 @@ def create_lesson_file(data, lang_name):
             sent = get_any(item, ['target_sentence', 'sentence'])
             sent_pron = get_any(item, ['sentence_pronunciation', 'sentence_pinyin'])
             trans = get_any(item, ['english_translation', 'translation'])
-            
             text += f"* {word}"
             if pron: text += f" [{pron}]"
             text += f"\n  SENTENCE: {sent}\n"
@@ -216,7 +169,6 @@ def create_lesson_file(data, lang_name):
     for chunk in data.get('story', []):
         if isinstance(chunk, dict):
             text += get_any(chunk, ['target_text', 'text']) + "\n"
-            
     return text
 
 def get_audio_bytes(text, lang_code):
@@ -231,11 +183,12 @@ def get_audio_bytes(text, lang_code):
 st.title("🌍 Vista Vocale")
 my_models = get_prioritized_models()
 
-t_upload, t_gallery = st.tabs(["📷 Snap Photo", "🖼️ Gallery"])
+t_upload, t_gallery = st.tabs(["📷 Snap/Upload", "🖼️ Gallery"])
 final_image_bytes = None
 
 with t_upload:
-    uploaded_file = st.file_uploader("Take a photo:", type=["jpg", "png", "jpeg", "webp"])
+    st.info("💡 Tip: On mobile, it's often better to take the photo first, then upload it here!")
+    uploaded_file = st.file_uploader("Upload or Take Photo:", type=["jpg", "png", "jpeg", "webp"])
     if uploaded_file: final_image_bytes = uploaded_file.getvalue()
 
 with t_gallery:
@@ -280,7 +233,6 @@ if final_image_bytes:
         st.markdown("---")
         t1, t2, t3, t4, t5 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "🇺🇸 Key", "💾 Save"])
         
-        # --- TAB 1: VOCAB ---
         with t1:
             for item in data.get('vocabulary', []):
                 if isinstance(item, dict):
@@ -289,22 +241,17 @@ if final_image_bytes:
                         word = get_any(item, ['target_word', 'word'])
                         pron = get_any(item, ['pronunciation', 'pinyin'])
                         sent = get_any(item, ['target_sentence', 'sentence'])
-                        # NEW: Try to get sentence pinyin
                         sent_pron = get_any(item, ['sentence_pronunciation', 'sentence_pinyin'])
                         
                         st.markdown(f"<div class='vocab-word'>{word}</div>", unsafe_allow_html=True)
                         if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
-                        
                         st.markdown(f"_{sent}_")
-                        # NEW: Display sentence pinyin if available
                         if sent_pron: st.markdown(f"<div class='pinyin' style='font-size: 0.9rem;'>{sent_pron}</div>", unsafe_allow_html=True)
-                        
                     with c2:
                         ab = get_audio_bytes(f"{word}... {sent}", lang['code'])
                         if ab: st.audio(ab, format='audio/mp3')
                     st.divider()
 
-        # --- TAB 2: CHAT ---
         with t2:
             for turn in data.get('conversation', []):
                 c1, c2 = st.columns([3, 1])
@@ -325,7 +272,6 @@ if final_image_bytes:
                     if ab: st.audio(ab, format='audio/mp3')
                 st.divider()
 
-        # --- TAB 3: STORY ---
         with t3:
             for chunk in data.get('story', []):
                 c1, c2 = st.columns([3, 1])
@@ -333,7 +279,6 @@ if final_image_bytes:
                     if isinstance(chunk, dict):
                         text = get_any(chunk, ['target_text', 'text'])
                         pron = get_any(chunk, ['pronunciation', 'pinyin'])
-                        
                         st.markdown(f"📖 {text}")
                         if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
                         text_for_audio = text
@@ -345,7 +290,6 @@ if final_image_bytes:
                     if ab: st.audio(ab, format='audio/mp3')
                 st.divider()
 
-        # --- TAB 4: ANSWER KEY ---
         with t4:
             st.header("🇺🇸 Answer Key")
             for item in data.get('vocabulary', []):
@@ -357,9 +301,16 @@ if final_image_bytes:
                     st.caption(f"Sent: {trans}")
                     st.divider()
 
-        # --- TAB 5: DOWNLOAD ---
         with t5:
-            st.header("💾 Download Notes")
+            st.header("💾 Save Notes")
             lesson_text = create_lesson_file(data, lang['name'])
-            # Explicitly label as .txt to avoid confusion
-            st.download_button(label=f"📥 Download Lesson (.txt)", data=lesson_text, file_name=f"{lang['name']}_Lesson.txt", mime="text/plain")
+            
+            # --- THE RESTORED DISPLAY ---
+            st.text_area("Copy text below:", value=lesson_text, height=300)
+            
+            st.download_button(
+                label=f"📥 Download (.txt)", 
+                data=lesson_text, 
+                file_name=f"{lang['name']}_Lesson.txt", 
+                mime="text/plain"
+            )
