@@ -3,9 +3,10 @@ from streamlit_mic_recorder import mic_recorder
 import google.generativeai as genai
 from gtts import gTTS
 import io
+import time
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Project Parla (Memory)", layout="centered")
+st.set_page_config(page_title="Project Parla (Patient Mode)", layout="centered")
 
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -24,71 +25,81 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🗣️ Parla con Giulia (Smart)")
+st.title("🗣️ Parla con Giulia")
 
 # --- 1. INITIALIZE MEMORY ---
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = [
         {"role": "user", "parts": ["Ciao!"]},
-        {"role": "model", "parts": ["Ciao! Sono Giulia, la tua insegnante. Come stai?"]}
+        {"role": "model", "parts": ["Ciao! Sono Giulia. Come stai?"]}
     ]
 
-# --- 2. DISPLAY CHAT HISTORY ---
-# We show the last few turns so you remember what is happening
-for message in st.session_state.chat_history[-4:]: # Show last 4 messages only
+# --- 2. DISPLAY HISTORY ---
+for message in st.session_state.chat_history[-4:]: 
     role_class = "user-msg" if message["role"] == "user" else "ai-msg"
     prefix = "👤 Tu:" if message["role"] == "user" else "🇮🇹 Giulia:"
     st.markdown(f"<div class='chat-box {role_class}'><b>{prefix}</b> {message['parts'][0]}</div>", unsafe_allow_html=True)
 
-# --- 3. MICROPHONE INPUT ---
+# --- 3. INPUT ---
 c1, c2, c3 = st.columns([1, 2, 1])
 with c2:
-    audio = mic_recorder(
-        start_prompt="🎤 Hold to Speak",
-        stop_prompt="⏹️ Release to Send",
-        just_once=True,
-        key='recorder'
-    )
+    audio = mic_recorder(start_prompt="🎤 Speak", stop_prompt="⏹️ Send", just_once=True, key='recorder')
 
-# --- 4. PROCESSING LOOP ---
+# --- 4. SAFE PROCESSING FUNCTION ---
+def safe_generate(model_action, *args, **kwargs):
+    """Tries to run AI. If it hits a limit, it waits and retries."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            return model_action(*args, **kwargs)
+        except Exception as e:
+            if "429" in str(e) or "Quota" in str(e):
+                wait_time = 15 * (attempt + 1) # Wait 15s, then 30s...
+                with st.spinner(f"🚦 Traffic jam (Quota). Waiting {wait_time}s to retry..."):
+                    time.sleep(wait_time)
+                continue # Try again
+            else:
+                raise e # Real error, crash
+    return None
+
+# --- 5. MAIN LOOP ---
 if audio:
     user_audio_bytes = audio['bytes']
     
     with st.spinner("🎧 Ascoltando..."):
         try:
-            # A. GET TRANSCRIPT (What did you say?)
+            # A. TRANSCRIPTION
             model_listen = genai.GenerativeModel("gemini-2.5-flash")
-            transcription = model_listen.generate_content([
-                "Transcribe this audio to Italian text perfectly.",
-                {"mime_type": "audio/wav", "data": user_audio_bytes}
-            ])
-            user_text = transcription.text
-            
-            # B. APPEND TO HISTORY
-            st.session_state.chat_history.append({"role": "user", "parts": [user_text]})
-            
-            # C. GENERATE RESPONSE (With Context!)
-            # We send the WHOLE history to the chat model
-            model_chat = genai.GenerativeModel("gemini-2.5-flash")
-            chat = model_chat.start_chat(history=st.session_state.chat_history)
-            
-            response = chat.send_message(
-                "Reply in Italian (A1 level). Keep it short (1 sentence). Ask a follow-up question to keep the conversation going."
+            transcription = safe_generate(
+                model_listen.generate_content,
+                ["Transcribe to Italian.", {"mime_type": "audio/wav", "data": user_audio_bytes}]
             )
-            ai_text = response.text
             
-            # D. APPEND AI RESPONSE TO HISTORY
-            st.session_state.chat_history.append({"role": "model", "parts": [ai_text]})
-            
-            # E. SPEAK IT
-            tts = gTTS(text=ai_text, lang='it')
-            audio_fp = io.BytesIO()
-            tts.write_to_fp(audio_fp)
-            audio_fp.seek(0)
-            
-            # RERUN to update the chat display and play audio
-            st.audio(audio_fp, format='audio/mp3', autoplay=True)
-            st.rerun()
-            
+            if transcription:
+                user_text = transcription.text
+                st.session_state.chat_history.append({"role": "user", "parts": [user_text]})
+                
+                # B. CHAT RESPONSE
+                model_chat = genai.GenerativeModel("gemini-2.5-flash")
+                chat = model_chat.start_chat(history=st.session_state.chat_history)
+                
+                response = safe_generate(
+                    chat.send_message,
+                    "Reply in simple Italian (A1). Short answer."
+                )
+                
+                if response:
+                    ai_text = response.text
+                    st.session_state.chat_history.append({"role": "model", "parts": [ai_text]})
+                    
+                    # C. AUDIO OUTPUT
+                    tts = gTTS(text=ai_text, lang='it')
+                    audio_fp = io.BytesIO()
+                    tts.write_to_fp(audio_fp)
+                    audio_fp.seek(0)
+                    
+                    st.audio(audio_fp, format='audio/mp3', autoplay=True)
+                    st.rerun()
+                
         except Exception as e:
-            st.error(f"Error: {str(e)}")
+            st.error(f"System Error: {str(e)}")
