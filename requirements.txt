@@ -3,5 +3,6 @@ requests
 gTTS
 duckduckgo-search
 Pillow
+streamlit-mic-recorder
 
 
