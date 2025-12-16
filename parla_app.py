@@ -23,18 +23,19 @@ st.markdown("""
     .user-msg { background-color: #e3f2fd; text-align: right; color: #1565c0; }
     .ai-msg { background-color: #f1f8e9; text-align: left; color: #2e7d32; }
     .success-box { padding: 10px; background-color: #e8f5e9; border-radius: 10px; color: #1b5e20; font-weight: bold;}
+    .audio-sticky { position: fixed; bottom: 0; width: 100%; background: white; padding: 10px; border-top: 1px solid #ddd; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🗣️ Parla con Giulia")
 
-# --- 1. INSTANT TRANSLATION HELPER ---
-# No button needed. Just type and hit Enter.
-english_text = st.text_input("Type English:", placeholder="e.g. I am retired")
+# --- 1. CLEAN TRANSLATION HELPER ---
+english_text = st.text_input("Type English (Press Enter):", placeholder="e.g. I am retired")
 
 if english_text:
     model_helper = genai.GenerativeModel("gemini-2.5-flash")
-    translation = model_helper.generate_content(f"Translate this to simple Italian: '{english_text}'")
+    # STRICT prompt to keep it short and clean
+    translation = model_helper.generate_content(f"Translate '{english_text}' to Italian. Output ONLY the single best translation. No alternatives. No explanations.")
     st.markdown(f"<div class='success-box'>🇮🇹 {translation.text}</div>", unsafe_allow_html=True)
 
 # --- 2. INITIALIZE MEMORY ---
@@ -53,9 +54,9 @@ for message in st.session_state.chat_history[-4:]:
 # --- 4. INPUT ---
 c1, c2, c3 = st.columns([1, 2, 1])
 with c2:
-    audio = mic_recorder(start_prompt="🎤 Speak Italian", stop_prompt="⏹️ Send", just_once=True, key='recorder')
+    audio = mic_recorder(start_prompt="🎤 Speak", stop_prompt="⏹️ Send", just_once=True, key='recorder')
 
-# --- 5. MAIN LOGIC ---
+# --- 5. PROCESSING LOGIC ---
 if audio:
     user_audio_bytes = audio['bytes']
     
@@ -76,21 +77,38 @@ if audio:
             chat = model_chat.start_chat(history=st.session_state.chat_history)
             
             response = chat.send_message(
-                "Reply in simple Italian (A1/A2). Keep it short (1-2 sentences). Ask a follow-up question."
+                "Reply in simple Italian (A1/A2). Keep it short (1 sentence). Ask a follow-up question."
             )
             
             ai_text = response.text
             st.session_state.chat_history.append({"role": "model", "parts": [ai_text]})
             
-            # C. AUDIO OUTPUT
+            # C. AUDIO GENERATION (Save to Memory)
             tts = gTTS(text=ai_text, lang='it')
             audio_fp = io.BytesIO()
             tts.write_to_fp(audio_fp)
             audio_fp.seek(0)
             
-            st.audio(audio_fp, format='audio/mp3', autoplay=True)
-            time.sleep(1)
+            # Save audio to session state so it stays on screen
+            st.session_state['last_audio'] = audio_fp
+            # Set a flag to autoplay only once per new message
+            st.session_state['autoplay_trigger'] = True
+            
             st.rerun()
             
         except Exception as e:
             st.error(f"Error: {str(e)}")
+
+# --- 6. PERSISTENT AUDIO PLAYER ---
+# This runs outside the loop, so it stays on screen!
+if 'last_audio' in st.session_state:
+    st.markdown("### 🔊 Replay Giulia:")
+    
+    # Logic to autoplay only when it's new
+    should_autoplay = st.session_state.get('autoplay_trigger', False)
+    
+    st.audio(st.session_state['last_audio'], format='audio/mp3', autoplay=should_autoplay)
+    
+    # Turn off autoplay immediately so it doesn't loop if you refresh manually
+    if should_autoplay:
+        st.session_state['autoplay_trigger'] = False
