@@ -4,5 +4,6 @@ gTTS
 duckduckgo-search
 Pillow
 streamlit-mic-recorder
+google-generativeai
 
 
