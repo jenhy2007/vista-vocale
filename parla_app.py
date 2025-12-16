@@ -6,7 +6,7 @@ import io
 import time
 
 # --- CONFIGURATION ---
-st.set_page_config(page_title="Project Parla (Patient Mode)", layout="centered")
+st.set_page_config(page_title="Project Parla (Mobile Fix)", layout="centered")
 
 try:
     API_KEY = st.secrets["GEMINI_API_KEY"]
@@ -54,12 +54,12 @@ def safe_generate(model_action, *args, **kwargs):
             return model_action(*args, **kwargs)
         except Exception as e:
             if "429" in str(e) or "Quota" in str(e):
-                wait_time = 15 * (attempt + 1) # Wait 15s, then 30s...
-                with st.spinner(f"🚦 Traffic jam (Quota). Waiting {wait_time}s to retry..."):
+                wait_time = 15 * (attempt + 1)
+                with st.spinner(f"🚦 Traffic jam (Quota). Waiting {wait_time}s..."):
                     time.sleep(wait_time)
-                continue # Try again
+                continue 
             else:
-                raise e # Real error, crash
+                raise e 
     return None
 
 # --- 5. MAIN LOOP ---
@@ -92,14 +92,20 @@ if audio:
                     ai_text = response.text
                     st.session_state.chat_history.append({"role": "model", "parts": [ai_text]})
                     
-                    # C. AUDIO OUTPUT
+                    # C. AUDIO OUTPUT (Mobile Fix: No Autoplay)
                     tts = gTTS(text=ai_text, lang='it')
                     audio_fp = io.BytesIO()
                     tts.write_to_fp(audio_fp)
                     audio_fp.seek(0)
                     
-                    st.audio(audio_fp, format='audio/mp3', autoplay=True)
+                    # Rerun to show the text first
+                    st.session_state['latest_audio'] = audio_fp
                     st.rerun()
                 
         except Exception as e:
             st.error(f"System Error: {str(e)}")
+
+# --- 6. PLAY AUDIO AT BOTTOM ---
+if 'latest_audio' in st.session_state:
+    st.markdown("### 🔊 Listen to Giulia:")
+    st.audio(st.session_state['latest_audio'], format='audio/mp3')
