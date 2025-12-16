@@ -4,6 +4,7 @@ import google.generativeai as genai
 from gtts import gTTS
 import io
 import time
+from datetime import datetime
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Parla con Giulia", layout="centered")
@@ -23,9 +24,28 @@ st.markdown("""
     .user-msg { background-color: #e3f2fd; text-align: right; color: #1565c0; }
     .ai-msg { background-color: #f1f8e9; text-align: left; color: #2e7d32; }
     .success-box { padding: 10px; background-color: #e8f5e9; border-radius: 10px; color: #1b5e20; font-weight: bold;}
-    .audio-sticky { position: fixed; bottom: 0; width: 100%; background: white; padding: 10px; border-top: 1px solid #ddd; }
 </style>
 """, unsafe_allow_html=True)
+
+# --- SIDEBAR: TOOLS ---
+with st.sidebar:
+    st.title("📚 Study Tools")
+    st.write("When you finish speaking, download your lesson here:")
+    
+    # Generate Transcript String
+    transcript = f"🇮🇹 Italian Lesson Log - {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+    if "chat_history" in st.session_state:
+        for msg in st.session_state.chat_history:
+            role = "ME (Tu)" if msg["role"] == "user" else "GIULIA"
+            transcript += f"{role}: {msg['parts'][0]}\n\n"
+    
+    # Download Button
+    st.download_button(
+        label="📥 Download Transcript (.txt)",
+        data=transcript,
+        file_name=f"italian_lesson_{datetime.now().strftime('%Y%m%d')}.txt",
+        mime="text/plain"
+    )
 
 st.title("🗣️ Parla con Giulia")
 
