@@ -22,17 +22,34 @@ except:
     st.error("❌ API Key missing. Please check Secrets.")
     st.stop()
 
-# GLOBAL CSS
+# GLOBAL CSS (Updated for High Contrast)
 st.markdown("""
 <style>
     html, body, [class*="css"] { font-size: 18px !important; }
+    
+    /* Big Buttons - HIGH CONTRAST (Dark Blue + White Text) */
     div.stButton > button {
-        width: 100%; height: 80px; font-size: 20px; font-weight: bold;
-        border-radius: 15px; margin-bottom: 10px; background-color: #f0f2f6;
+        width: 100%; 
+        height: 80px; 
+        font-size: 20px; 
+        font-weight: bold;
+        border-radius: 15px; 
+        margin-bottom: 10px; 
+        background-color: #1565c0; /* Dark Blue */
+        color: white !important;   /* White Text */
+        border: none;
     }
-    div.stButton > button:hover { background-color: #e3f2fd; border: 2px solid #1565c0; }
+    div.stButton > button:hover { 
+        background-color: #0d47a1; /* Even Darker Blue on Hover */
+        color: white !important;
+        border: 2px solid #64b5f6; 
+    }
+    
+    /* Text Styles */
     .pinyin { color: #555; font-size: 1.1rem; font-style: italic; margin-bottom: 5px; font-family: "Courier New", monospace; }
     .vocab-word { font-size: 1.5rem; font-weight: bold; color: #1E88E5; }
+    
+    /* Chat & Logic Styles */
     .chat-box { padding: 15px; border-radius: 15px; margin-bottom: 10px; }
     .user-msg { background-color: #e3f2fd; text-align: right; color: #1565c0; }
     .ai-msg { background-color: #f1f8e9; text-align: left; color: #2e7d32; }
@@ -184,7 +201,8 @@ def run_photo_app():
             selected_lang_key = st.selectbox("Target Language:", list(LANG_CONFIG.keys()), index=0)
             current_lang = LANG_CONFIG[selected_lang_key]
             
-            if st.button(f"Generate {current_lang['name']} Lesson", type="primary"):
+            # UPDATED BUTTON LABEL & CSS HANDLES COLOR
+            if st.button(f"Click to Generate {current_lang['name']} Lesson", type="primary"):
                 if not my_models:
                      st.error("No models found.")
                 else:
@@ -238,28 +256,23 @@ def run_photo_app():
         with t2:
             for turn in data.get('conversation', []):
                 if isinstance(turn, dict):
-                    col_text, col_audio = st.columns([3, 1]) # Added columns for audio
-                    
+                    col_text, col_audio = st.columns([3, 1])
                     speaker = get_any(turn, ['speaker', 'role'], 'Speaker')
                     text = get_any(turn, ['target_text', 'text', 'content', 'message', 'sentence'])
                     pron = get_any(turn, ['pronunciation', 'pinyin'])
-                    
                     with col_text:
                         st.markdown(f"**{speaker}**: {text}")
                         if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
-                    
-                    with col_audio: # Generate audio for this turn
+                    with col_audio:
                         ab = get_audio_bytes(text, lang['code'])
                         if ab: st.audio(ab, format='audio/mp3')
-                        
                 else:
                     st.write(turn)
                 st.divider()
         
         with t3:
             for chunk in data.get('story', []):
-                col_text, col_audio = st.columns([3, 1]) # Added columns for audio
-                
+                col_text, col_audio = st.columns([3, 1])
                 with col_text:
                     if isinstance(chunk, dict):
                         text = get_any(chunk, ['target_text', 'text', 'content', 'sentence'])
@@ -269,11 +282,9 @@ def run_photo_app():
                     elif isinstance(chunk, str):
                         text = chunk
                         st.markdown(f"📖 {chunk}")
-                
-                with col_audio: # Generate audio for this chunk
+                with col_audio:
                     ab = get_audio_bytes(text, lang['code'])
                     if ab: st.audio(ab, format='audio/mp3')
-                
                 st.divider()
 
         with t4:
