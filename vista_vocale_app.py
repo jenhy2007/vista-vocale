@@ -22,7 +22,7 @@ except:
     st.error("❌ API Key missing. Please check Secrets.")
     st.stop()
 
-# GLOBAL CSS (Combines big text from Vista and chat bubbles from Parla)
+# GLOBAL CSS
 st.markdown("""
 <style>
     /* Global Font Size */
@@ -90,10 +90,42 @@ def get_audio_bytes(text, lang_code):
     except: return None
 
 def get_any(d, keys, default=""):
+    """Helper to safely find values using multiple possible key names"""
     for k in keys:
         if k in d and d[k]: return d[k]
         if k.lower() in d and d[k.lower()]: return d[k.lower()]
     return default
+
+def create_lesson_file(data, lang_name):
+    """Generates the text file for the Save tab"""
+    text = f"🌍 VISTA VOCALE - {lang_name.upper()} LESSON\n==========================================\n\n"
+    
+    # 1. Vocab
+    text += "1. VOCABULARY\n-------------\n"
+    for item in data.get('vocabulary', []):
+        if isinstance(item, dict):
+            word = get_any(item, ['target_word', 'word', 'term'])
+            sent = get_any(item, ['target_sentence', 'sentence', 'example'])
+            trans = get_any(item, ['english_translation', 'translation', 'meaning'])
+            text += f"* {word}\n  SENTENCE: {sent}\n  MEANING: {trans}\n\n"
+            
+    # 2. Conversation
+    text += "2. CONVERSATION\n---------------\n"
+    for turn in data.get('conversation', []):
+        if isinstance(turn, dict):
+            speaker = get_any(turn, ['speaker', 'role'])
+            content = get_any(turn, ['target_text', 'text', 'content', 'message', 'sentence'])
+            text += f"{speaker}: {content}\n"
+            
+    # 3. Story
+    text += "\n3. STORY\n--------\n"
+    for chunk in data.get('story', []):
+        if isinstance(chunk, dict):
+             text += get_any(chunk, ['target_text', 'text', 'content', 'sentence']) + "\n"
+        elif isinstance(chunk, str):
+             text += chunk + "\n"
+             
+    return text
 
 # ==========================================
 # 3. APP A: VISTA VOCALE (Photo Lesson)
@@ -108,7 +140,6 @@ def run_photo_app():
     with c_head2:
         st.title("📷 Photo Lesson")
 
-    # --- Original Vista Vocale Logic ---
     LANG_CONFIG = {
         "🇮🇹 Italian": { "code": "it", "name": "Italian", "super7": "essere, avere, volere, andare, piacere, c'è, potere" },
         "🇫🇷 French": { "code": "fr", "name": "French", "super7": "être, avoir, vouloir, aller, aimer, il y a, pouvoir" },
@@ -135,7 +166,6 @@ def run_photo_app():
         }
         choice = st.selectbox("Choose scene:", list(GALLERY.keys()))
         if choice and GALLERY[choice]:
-            # Simple loader logic
             try:
                 headers = {'User-Agent': 'Mozilla/5.0'}
                 resp = requests.get(GALLERY[choice], headers=headers, timeout=5)
@@ -152,170 +182,36 @@ def run_photo_app():
             current_lang = LANG_CONFIG[selected_lang_key]
             
             if st.button(f"Generate {current_lang['name']} Lesson", type="primary"):
-                # --- GENERATION LOGIC (Simplified for clarity) ---
                 if not my_models:
                      st.error("No models found.")
                 else:
                     with st.spinner("Analyzing image..."):
-                        # (Using the best model found)
+                        # --- STRICT PROMPT ---
                         model_name = my_models[0]
                         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
                         b64_image = base64.b64encode(final_image_bytes).decode('utf-8')
                         
-                        prompt = f"""
-                        You are a TPRS {current_lang['name']} teacher. Analyze image.
-                        1. 5 Vocab words.
-                        2. Conversation using Super 7 verbs: {current_lang['super7']}.
-                        3. Short Story (A1 level).
-                        FORMAT: JSON. keys: vocabulary, conversation, story.
-                        If CHINESE, include pinyin keys.
-                        """
+                        prompt_text = f"""
+                        You are an expert TPRS {current_lang['name']} teacher.
+                        Analyze the image and create a lesson.
+                        1. Select 5 High-Frequency Vocabulary words visible in the image.
+                        2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: {current_lang['super7']}.
+                        3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
+                        4. Keep level A1 (Beginner).
                         
-                        payload = {"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/jpeg", "data": b64_image}}]}], "generation_config": {"response_mime_type": "application/json"}}
+                        CRITICAL FORMATTING:
+                        - If CHINESE: You MUST provide Pinyin for the 'target_word' AND the 'target_sentence'.
+                        - If ITALIAN/FRENCH: Leave pronunciation empty.
                         
-                        try:
-                            resp = requests.post(url, json=payload, headers={'Content-Type': 'application/json'})
-                            if resp.status_code == 200:
-                                res_json = resp.json()
-                                raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
-                                clean_json = json.loads(raw_text.replace('```json','').replace('```',''))
-                                st.session_state['lesson_data'] = clean_json
-                                st.session_state['current_lang_config'] = current_lang
-                        except Exception as e:
-                            st.error(f"Error: {e}")
-
-    # DISPLAY LESSON
-    if 'lesson_data' in st.session_state:
-        data = st.session_state['lesson_data']
-        lang = st.session_state['current_lang_config']
-        
-        t1, t2, t3, t4 = st.tabs(["📖 Vocab", "🗣️ Chat", "📜 Story", "💾 Save"])
-        
-        with t1:
-            for item in data.get('vocabulary', []):
-                col_a, col_b = st.columns([3, 1])
-                with col_a:
-                    st.markdown(f"**{get_any(item, ['target_word', 'word'])}**")
-                    st.caption(get_any(item, ['target_sentence', 'sentence']))
-                with col_b:
-                    ab = get_audio_bytes(get_any(item, ['target_word', 'word']), lang['code'])
-                    if ab: st.audio(ab, format='audio/mp3')
-                st.divider()
-        
-        with t2: # Dialog
-            for turn in data.get('conversation', []):
-                st.markdown(f"**{get_any(turn, ['speaker', 'role'])}**: {get_any(turn, ['target_text', 'text'])}")
-        
-        with t3: # Story
-            for chunk in data.get('story', []):
-                st.write(get_any(chunk, ['target_text', 'text']))
-
-        with t4: # Save
-            st.write("Save feature placeholder.")
-
-# ==========================================
-# 4. APP B: PARLA (Voice Chat)
-# ==========================================
-def run_parla_app():
-    # Navigation Header
-    c_head1, c_head2 = st.columns([1, 5])
-    with c_head1:
-        if st.button("⬅️ Home"):
-            st.session_state.current_page = "home"
-            st.rerun()
-    with c_head2:
-        st.title("🗣️ Parla con Giulia")
-
-    # Sidebar: Transcript
-    with st.sidebar:
-        st.title("📚 Log")
-        transcript = f"🇮🇹 Parla Log - {datetime.now().strftime('%Y-%m-%d')}\n\n"
-        if "parla_history" in st.session_state:
-            for msg in st.session_state.parla_history:
-                role = "ME" if msg["role"] == "user" else "GIULIA"
-                transcript += f"{role}: {msg['parts'][0]}\n\n"
-        st.download_button("📥 Download Log", transcript, "log.txt")
-
-    # Helper Box
-    english_text = st.text_input("Helper (Type English + Enter):", placeholder="e.g. I am hungry")
-    if english_text:
-        model_h = genai.GenerativeModel("gemini-2.5-flash")
-        trans = model_h.generate_content(f"Translate '{english_text}' to Italian. ONE best option.")
-        st.markdown(f"<div class='success-box'>🇮🇹 {trans.text}</div>", unsafe_allow_html=True)
-
-    # Chat History
-    if "parla_history" not in st.session_state:
-        st.session_state.parla_history = [
-            {"role": "user", "parts": ["Ciao!"]},
-            {"role": "model", "parts": ["Ciao! Sono Giulia. Di cosa vuoi parlare?"]}
-        ]
-
-    for message in st.session_state.parla_history[-4:]: 
-        role_class = "user-msg" if message["role"] == "user" else "ai-msg"
-        prefix = "👤 Tu:" if message["role"] == "user" else "🇮🇹 Giulia:"
-        st.markdown(f"<div class='chat-box {role_class}'><b>{prefix}</b> {message['parts'][0]}</div>", unsafe_allow_html=True)
-
-    # Mic Input
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        audio = mic_recorder(start_prompt="🎤 Speak Italian", stop_prompt="⏹️ Send", just_once=True, key='parla_mic')
-
-    if audio:
-        with st.spinner("🎧 Ascoltando..."):
-            try:
-                # 1. Transcribe
-                model_listen = genai.GenerativeModel("gemini-2.5-flash")
-                transcription = model_listen.generate_content(["Transcribe to Italian.", {"mime_type": "audio/wav", "data": audio['bytes']}])
-                user_text = transcription.text
-                st.session_state.parla_history.append({"role": "user", "parts": [user_text]})
-                
-                # 2. Chat
-                model_chat = genai.GenerativeModel("gemini-2.5-flash")
-                chat = model_chat.start_chat(history=st.session_state.parla_history)
-                response = chat.send_message("Reply in simple Italian (A1). Short answer.")
-                ai_text = response.text
-                st.session_state.parla_history.append({"role": "model", "parts": [ai_text]})
-                
-                # 3. Audio
-                tts = gTTS(text=ai_text, lang='it')
-                audio_fp = BytesIO()
-                tts.write_to_fp(audio_fp)
-                audio_fp.seek(0)
-                st.session_state['parla_audio'] = audio_fp
-                st.session_state['parla_trigger'] = True
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
-
-    # Persistent Player
-    if 'parla_audio' in st.session_state:
-        st.markdown("### 🔊 Replay:")
-        should_auto = st.session_state.get('parla_trigger', False)
-        st.audio(st.session_state['parla_audio'], format='audio/mp3', autoplay=should_auto)
-        if should_auto: st.session_state['parla_trigger'] = False
-
-# ==========================================
-# 5. MAIN MENU ROUTER
-# ==========================================
-if 'current_page' not in st.session_state:
-    st.session_state.current_page = "home"
-
-if st.session_state.current_page == "home":
-    st.title("📱 Vista Vocale Super App")
-    st.markdown("### Choose your practice:")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("📷 Photo Lesson"):
-            st.session_state.current_page = "photo"
-            st.rerun()
-    with col2:
-        if st.button("🗣️ Parla (Chat)"):
-            st.session_state.current_page = "parla"
-            st.rerun()
-
-elif st.session_state.current_page == "photo":
-    run_photo_app()
-
-elif st.session_state.current_page == "parla":
-    run_parla_app()
+                        Return STRICT JSON with these exact keys:
+                        {{
+                          "vocabulary": [
+                            {{
+                                "target_word": "...", 
+                                "pronunciation": "...", 
+                                "target_sentence": "...", 
+                                "english_translation": "..."
+                            }}
+                          ],
+                          "conversation": [{{"speaker": "...", "target_text": "...", "pronunciation": "..."}}],
+                          "story": [{{"target_text": "...", "pronunciation":
