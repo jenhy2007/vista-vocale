@@ -41,9 +41,8 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. THE PROMPT TEMPLATE (MOVED HERE FOR SAFETY)
+# 2. THE PROMPT TEMPLATE
 # ==========================================
-# This is outside the function to prevent indentation/syntax errors
 PROMPT_TEMPLATE = """
 You are an expert TPRS LANGUAGE_TARGET teacher.
 Analyze the image and create a lesson.
@@ -190,12 +189,10 @@ def run_photo_app():
                      st.error("No models found.")
                 else:
                     with st.spinner("Analyzing image..."):
-                        # --- SAFE PROMPT CONSTRUCTION ---
                         model_name = my_models[0]
                         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
                         b64_image = base64.b64encode(final_image_bytes).decode('utf-8')
                         
-                        # Load Global Template
                         prompt_text = PROMPT_TEMPLATE.replace("LANGUAGE_TARGET", current_lang['name'])
                         prompt_text = prompt_text.replace("SUPER_7_VERBS", current_lang['super7'])
                         
@@ -241,23 +238,43 @@ def run_photo_app():
         with t2:
             for turn in data.get('conversation', []):
                 if isinstance(turn, dict):
+                    col_text, col_audio = st.columns([3, 1]) # Added columns for audio
+                    
                     speaker = get_any(turn, ['speaker', 'role'], 'Speaker')
                     text = get_any(turn, ['target_text', 'text', 'content', 'message', 'sentence'])
                     pron = get_any(turn, ['pronunciation', 'pinyin'])
-                    st.markdown(f"**{speaker}**: {text}")
-                    if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
+                    
+                    with col_text:
+                        st.markdown(f"**{speaker}**: {text}")
+                        if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
+                    
+                    with col_audio: # Generate audio for this turn
+                        ab = get_audio_bytes(text, lang['code'])
+                        if ab: st.audio(ab, format='audio/mp3')
+                        
                 else:
                     st.write(turn)
+                st.divider()
         
         with t3:
             for chunk in data.get('story', []):
-                 if isinstance(chunk, dict):
-                    text = get_any(chunk, ['target_text', 'text', 'content', 'sentence'])
-                    pron = get_any(chunk, ['pronunciation', 'pinyin'])
-                    st.markdown(f"📖 {text}")
-                    if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
-                 elif isinstance(chunk, str):
-                    st.markdown(f"📖 {chunk}")
+                col_text, col_audio = st.columns([3, 1]) # Added columns for audio
+                
+                with col_text:
+                    if isinstance(chunk, dict):
+                        text = get_any(chunk, ['target_text', 'text', 'content', 'sentence'])
+                        pron = get_any(chunk, ['pronunciation', 'pinyin'])
+                        st.markdown(f"📖 {text}")
+                        if pron: st.markdown(f"<div class='pinyin'>{pron}</div>", unsafe_allow_html=True)
+                    elif isinstance(chunk, str):
+                        text = chunk
+                        st.markdown(f"📖 {chunk}")
+                
+                with col_audio: # Generate audio for this chunk
+                    ab = get_audio_bytes(text, lang['code'])
+                    if ab: st.audio(ab, format='audio/mp3')
+                
+                st.divider()
 
         with t4:
             st.header("💾 Save Notes")
