@@ -186,16 +186,17 @@ def run_photo_app():
                      st.error("No models found.")
                 else:
                     with st.spinner("Analyzing image..."):
-                        # --- STRICT PROMPT ---
+                        # --- SAFE PROMPT CONSTRUCTION (Fixes SyntaxError) ---
                         model_name = my_models[0]
                         url = f"https://generativelanguage.googleapis.com/v1beta/{model_name}:generateContent?key={API_KEY}"
                         b64_image = base64.b64encode(final_image_bytes).decode('utf-8')
                         
-                        prompt_text = f"""
-                        You are an expert TPRS {current_lang['name']} teacher.
+                        # Note: We use a standard string here (no 'f') to avoid bracket conflicts
+                        base_prompt = """
+                        You are an expert TPRS LANGUAGE_TARGET teacher.
                         Analyze the image and create a lesson.
                         1. Select 5 High-Frequency Vocabulary words visible in the image.
-                        2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: {current_lang['super7']}.
+                        2. Create a simple Conversation that uses ONLY these words and "Super 7" verbs: SUPER_7_VERBS.
                         3. Create a Story (5-6 sentences) that RECYCLES the vocab words.
                         4. Keep level A1 (Beginner).
                         
@@ -204,14 +205,14 @@ def run_photo_app():
                         - If ITALIAN/FRENCH: Leave pronunciation empty.
                         
                         Return STRICT JSON with these exact keys:
-                        {{
+                        {
                           "vocabulary": [
-                            {{
+                            {
                                 "target_word": "...", 
                                 "pronunciation": "...", 
                                 "target_sentence": "...", 
                                 "english_translation": "..."
-                            }}
+                            }
                           ],
-                          "conversation": [{{"speaker": "...", "target_text": "...", "pronunciation": "..."}}],
-                          "story": [{{"target_text": "...", "pronunciation":
+                          "conversation": [{"speaker": "...", "target_text": "...", "pronunciation": "..."}],
+                          "story": [{"target_text": "...", "pronunciation": "..."}]
